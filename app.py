@@ -7,15 +7,17 @@ import json
 import re
 import sys
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
 import ollama as ollama_client
-from langchain_core.messages import AIMessageChunk, HumanMessage
+from langchain_core.messages import AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
 from langchain_ollama import ChatOllama
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.graph import START, MessagesState, StateGraph
+from langgraph.prebuilt import ToolNode, tools_condition
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import HTML
@@ -31,6 +33,8 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
+from tools import ALL_TOOLS
+
 console = Console()
 THREAD_ID = "session"
 HISTORY_FILE = Path.home() / ".ollama_chat_history"
@@ -40,12 +44,24 @@ SESSIONS_DIR = Path(__file__).resolve().parent / "sessions"
 # so the input line and the panels always agree on a palette.
 PT_USER, PT_ACCENT, PT_MUTED = "ansigreen", "ansicyan", "ansibrightblack"
 
+SYSTEM_PROMPT = (
+    "You have two tools: search_online (quick web search, short snippets) and "
+    "fetch_url (reads one full page in detail). Search first for current or "
+    "factual questions; if the snippets aren't detailed or credible enough to "
+    "answer confidently, fetch one of the returned URLs before answering. "
+    "When calling fetch_url, copy the exact 'https://...' URL string from a "
+    "search_online result verbatim — never a placeholder or description. "
+    "Say which source you used."
+)
+
 COMMANDS = {
     "/model": "Switch the active Ollama model (name, number, or fuzzy match)",
     "/clear": "Clear conversation history",
     "/help": "Show this help message",
     "/exit": "Quit the chat (also /quit)",
 }
+
+TOOL_ICONS = {"search_online": "🔍", "fetch_url": "📄"}
 
 
 class SessionState:
@@ -138,17 +154,26 @@ def get_installed_models() -> list[str]:
 
 
 def build_app(model_name: str, checkpointer: MemorySaver):
-    """Compile a single-node LangGraph chat graph backed by the given Ollama model."""
-    llm = ChatOllama(model=model_name)
+    """Compile a LangGraph chat graph backed by the given Ollama model, with tool-calling enabled."""
+    llm = ChatOllama(model=model_name).bind_tools(ALL_TOOLS)
 
     def chat_node(state: MessagesState):
-        response = llm.invoke(state["messages"])
+        response = llm.invoke([SystemMessage(content=SYSTEM_PROMPT), *state["messages"]])
+        if not response.tool_calls:
+            fake_call = parse_fake_tool_call(response.content)
+            if fake_call:
+                response = response.model_copy(update={
+                    "content": "",
+                    "tool_calls": [{**fake_call, "id": str(uuid.uuid4()), "type": "tool_call"}],
+                })
         return {"messages": [response]}
 
     graph = StateGraph(MessagesState)
     graph.add_node("chat", chat_node)
+    graph.add_node("tools", ToolNode(ALL_TOOLS))
     graph.add_edge(START, "chat")
-    graph.add_edge("chat", END)
+    graph.add_conditional_edges("chat", tools_condition)
+    graph.add_edge("tools", "chat")
     return graph.compile(checkpointer=checkpointer)
 
 
@@ -171,6 +196,31 @@ def print_banner(model_count: int) -> None:
             box=box.DOUBLE,
         )
     )
+
+
+TOOL_NAMES = {t.name for t in ALL_TOOLS}
+FAKE_CALL_PREFIX_RE = re.compile(r'^[\s`]*(?:json)?[\s`]*\{\s*"name"\s*:\s*"([^"]+)"', re.IGNORECASE)
+
+
+def parse_fake_tool_call(content: str) -> dict | None:
+    """Detect a tool call a model printed as plain text instead of a real tool_call, and normalize it."""
+    text = (content or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("name") not in TOOL_NAMES:
+        return None
+    args = data.get("arguments") or data.get("args") or data.get("parameters") or {}
+    if not isinstance(args, dict):
+        return None
+    args = {k: (v["value"] if isinstance(v, dict) and "value" in v else v) for k, v in args.items()}
+    return {"name": data["name"], "args": args}
 
 
 def match_model(query: str, models: list[str]) -> str | None:
@@ -226,6 +276,10 @@ def print_help() -> None:
     console.print(
         "[dim]Tip: ↑/↓ recalls history · Tab completes commands and model names · "
         "Ctrl+C cancels a reply · Ctrl+D exits.[/dim]"
+    )
+    console.print(
+        "[dim]Tip: just ask the agent to search online — it can search, then read a full page for more "
+        "detail on its own, even on models without native tool-calling.[/dim]"
     )
 
 
@@ -355,6 +409,8 @@ def chat_loop(models: list[str]) -> None:
             else:
                 full_reply = ""
                 final_meta: dict = {}
+                tool_events: list[dict] = []
+                fake_call_announced = False
                 cancelled = False
                 error: Exception | None = None
                 start_time = time.monotonic()
@@ -362,8 +418,40 @@ def chat_loop(models: list[str]) -> None:
                 try:
                     with Live(spinner, console=console, refresh_per_second=12, transient=True) as live:
                         for chunk in stream_reply(graph_app, user_text):
+                            tool_calls = getattr(chunk, "tool_calls", None) or []
+                            if tool_calls:
+                                for call in tool_calls:
+                                    name = call.get("name")
+                                    args = call.get("args") or {}
+                                    tool_events.append({"tool": name, "args": args})
+                                    detail = args.get("query") or args.get("url") or ""
+                                    icon = TOOL_ICONS.get(name, "🔧")
+                                    label = (name or "tool").replace("_", " ")
+                                    console.print(f"[dim]{icon} {label}: [italic]'{detail}'[/italic]…[/dim]")
+                                spinner.update(text=Text(" reading results...", style="italic cyan"))
+                                live.update(spinner)
+                                continue
+                            if isinstance(chunk, ToolMessage):
+                                full_reply = ""
+                                fake_call_announced = False
+                                continue
                             if chunk.content:
                                 full_reply += chunk.content
+                            if not full_reply:
+                                continue
+
+                            fake_match = FAKE_CALL_PREFIX_RE.match(full_reply)
+                            if fake_match:
+                                if not fake_call_announced:
+                                    name = fake_match.group(1)
+                                    icon = TOOL_ICONS.get(name, "🔧")
+                                    label = name.replace("_", " ")
+                                    console.print(f"[dim]{icon} {label}: [italic]'…'[/italic] (as text, no native tool-calling)[/dim]")
+                                    spinner.update(text=Text(" reading results...", style="italic cyan"))
+                                    fake_call_announced = True
+                                live.update(spinner)
+                                continue
+
                             if chunk.response_metadata:
                                 final_meta = chunk.response_metadata
                             elapsed = time.monotonic() - start_time
@@ -389,6 +477,7 @@ def chat_loop(models: list[str]) -> None:
                     elapsed_seconds=round(elapsed, 3),
                     cancelled=cancelled,
                     error=str(error) if error else None,
+                    tool_calls=tool_events,
                     ollama_metrics=final_meta,
                     **extract_usage(final_meta),
                 )
