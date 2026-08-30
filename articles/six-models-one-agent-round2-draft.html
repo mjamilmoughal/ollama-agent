@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Draft: What Happens When One Model Never Touches Its Tools</title>
+<style>
+  :root {
+    --ink: #1c1c1c;
+    --sub: #55554f;
+    --line: #e2e0d8;
+    --bg: #fdfcf9;
+    --card: #f6f4ee;
+    --accent: #8a5a3b;
+    --mono-bg: #2b2a27;
+    --mono-ink: #eae6da;
+    --good: #3f6b4a;
+    --bad: #a33f2e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif;
+    line-height: 1.65;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 56px 24px 120px; }
+  .kicker {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: 700;
+    margin-bottom: 14px;
+  }
+  h1.title { font-size: 2.2rem; line-height: 1.15; margin: 0 0 14px; font-weight: 700; }
+  .dek { font-size: 1.15rem; color: var(--sub); font-style: italic; margin: 0 0 40px; line-height: 1.5; }
+  h2 {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 1.5rem; margin: 52px 0 18px; padding-bottom: 8px; border-bottom: 2px solid var(--line);
+  }
+  h3 { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 1.15rem; margin: 30px 0 12px; color: var(--accent); }
+  p { margin: 0 0 18px; font-size: 1.08rem; }
+  ul, ol { margin: 0 0 18px; padding-left: 26px; }
+  li { margin-bottom: 8px; font-size: 1.08rem; }
+  a { color: var(--accent); }
+  strong { font-weight: 700; }
+  code { font-family: 'SF Mono', Consolas, Menlo, monospace; background: var(--card); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; }
+  .quote-card {
+    background: var(--card); border-left: 3px solid var(--accent); border-radius: 6px;
+    padding: 16px 20px; margin: 20px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 0.95rem;
+  }
+  .quote-card .label { text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; font-weight: 700; color: var(--sub); margin-bottom: 8px; }
+  .quote-card .prompt { color: var(--sub); margin-bottom: 10px; font-style: italic; }
+  pre.trace {
+    background: var(--mono-bg); color: var(--mono-ink); padding: 14px 16px; border-radius: 6px; overflow-x: auto;
+    font-family: 'SF Mono', Consolas, Menlo, monospace; font-size: 0.82rem; line-height: 1.5; margin: 0; white-space: pre-wrap; word-break: break-word;
+  }
+  .reply-text { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+  table { width: 100%; border-collapse: collapse; margin: 20px 0 28px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--sub); border-bottom: 2px solid var(--ink); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .ctr { text-align: center; }
+  .yes { color: var(--bad); font-weight: 700; }
+  .no { color: var(--good); font-weight: 700; }
+  .callout {
+    background: #fff9ec; border: 1px solid #ecdcb0; border-radius: 8px; padding: 18px 22px; margin: 24px 0; font-size: 1rem;
+  }
+  .callout .label { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: #8a6416; margin-bottom: 8px; }
+  hr.sep { border: none; border-top: 1px solid var(--line); margin: 48px 0; }
+  .chart { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 24px 0 8px; }
+  .bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 0.87rem; }
+  .bar-row .name { width: 150px; flex-shrink: 0; text-align: right; color: var(--ink); }
+  .bar-track { flex: 1; background: var(--card); border-radius: 3px; height: 20px; position: relative; overflow: hidden; }
+  .bar-fill { background: var(--accent); height: 100%; border-radius: 3px; }
+  .bar-fill.slow { background: repeating-linear-gradient(45deg, var(--bad), var(--bad) 4px, #e2b3a8 4px, #e2b3a8 8px); }
+  .bar-fill.warn { background: repeating-linear-gradient(45deg, #c99b3e, #c99b3e 4px, #f0d9a3 4px, #f0d9a3 8px); }
+  .bar-val { width: 190px; flex-shrink: 0; font-variant-numeric: tabular-nums; color: var(--sub); font-size: 0.8rem; }
+  .chart-legend { font-size: 0.78rem; color: var(--sub); margin-top: 12px; }
+  .chart-legend span { margin-right: 16px; }
+  .meta-byline {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 0.85rem; color: var(--sub);
+    margin-bottom: 40px; padding-bottom: 24px; border-bottom: 1px solid var(--line);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="kicker">Building intelligent systems — measuring what works, what fails, and why</div>
+  <h1 class="title">Six Local Models, One Agent, and One That Never Touched Its Tools</h1>
+  <p class="dek">I reran my agent experiment the right way this time — one fresh process per model, the same fixed list of questions, no shared memory between runs. I found a model that refused every tool call for an entire session and still, somehow, named a file it had no way of knowing about. Twice.</p>
+
+  <div class="meta-byline">DRAFT — not for publication. Second round, built after fixing the biggest methodological gap from the first pass.</div>
+
+  <p>I analyzed my own agent again. Last time I did this, I found something worth flagging before I trusted any of it: because my chat loop keeps one conversation thread alive across <code>/model</code> switches, later models in a relay session could see earlier models' real tool results. That meant I couldn't always tell whether a model got something right because it checked, or because it was quietly reading someone else's homework.</p>
+
+  <p>So this round, I did it differently. One model, one fresh terminal process, one clean run — closed and reopened for the next model, exactly so nothing carries over. Same fifteen-ish questions, asked in the same order, across six sessions. Then I read every session file the same way I read the last batch: turn by turn, tool call by tool call, timestamp by timestamp.</p>
+
+  <p>This is what I actually found.</p>
+
+  <h2>The agent, briefly</h2>
+
+  <p>Same setup as before: Ollama running six local models, LangGraph driving a small chat/tools loop, LangChain underneath. Two tools bound to every model — <code>search_online</code> for the web, and a filesystem pair I built, <code>find_file</code> and <code>read_file</code>, for locating and reading things on my own drives. Nothing about the agent changed between rounds. What changed is how I ran it.</p>
+
+  <h2>The six models</h2>
+
+  <table>
+    <tr><th>Model</th><th class="num">Params</th><th>Quantization</th><th>This round</th></tr>
+    <tr><td><code>qwen3:8b</code></td><td class="num">8.2B</td><td>Q4_K_M</td><td>15-turn fresh session</td></tr>
+    <tr><td><code>granite4:micro</code></td><td class="num">3.4B</td><td>Q4_K_M</td><td>Two sessions (crashed mid-battery, restarted)</td></tr>
+    <tr><td><code>llama3.2:3b</code></td><td class="num">3.2B</td><td>Q4_K_M</td><td>14-turn fresh session</td></tr>
+    <tr><td><code>gemma4:12b</code></td><td class="num">11.9B</td><td>Q4_K_M</td><td>Two sessions (stalled mid-battery, restarted)</td></tr>
+    <tr><td><code>qwen2.5-coder:7b</code></td><td class="num">7.6B</td><td>Q4_K_M</td><td>12-turn fresh session</td></tr>
+  </table>
+
+  <p><code>qwen3-vl:8b-instruct</code> didn't get a fresh-process run this round — everything below is from the other five. Two of those five needed a restart partway through, which is itself part of the story, not a data-collection footnote.</p>
+
+  <h2>The experiment</h2>
+
+  <p>I asked each model roughly the same sequence: a mix of stable facts (capital of France, 2+2), a couple of technical explanations (process vs. thread, what an API is), several things that genuinely need a live web search (Bitcoin price, latest Python release, latest LangGraph/LangChain versions, Ollama's supported platforms, NVIDIA's current CEO), and a handful of filesystem requests of increasing vagueness (a named file, "my latest report," a half-specified project directory, a PDF I never actually confirmed exists).</p>
+
+  <p>The point of mixing those in wasn't to trick anyone. It was to watch a decision I can't see in a normal chat reply: does the model reach for a tool, or not — and is that choice actually calibrated to whether it needed one?</p>
+
+  <h2>What happened</h2>
+
+  <h3>Knowing when a tool isn't needed</h3>
+
+  <p>Four of the five models saw the exact same opening question: <em>"What is the capital of France?"</em> Two called <code>search_online</code> anyway.</p>
+
+  <table>
+    <tr><th>Model</th><th class="ctr">Capital of France</th><th class="ctr">Process vs. thread</th><th class="ctr">2 + 2</th></tr>
+    <tr><td>qwen3:8b</td><td class="ctr no">no tool</td><td class="ctr no">no tool</td><td class="ctr no">no tool</td></tr>
+    <tr><td>granite4:micro</td><td class="ctr yes">searched</td><td class="ctr yes">searched</td><td class="ctr no">no tool</td></tr>
+    <tr><td>llama3.2:3b</td><td class="ctr yes">searched</td><td class="ctr yes">searched</td><td class="ctr yes">searched</td></tr>
+    <tr><td>gemma4:12b</td><td class="ctr no">no tool</td><td class="ctr no">no tool</td><td class="ctr no">no tool (3rd try)</td></tr>
+    <tr><td>qwen2.5-coder:7b</td><td class="ctr no">no tool</td><td class="ctr no">no tool</td><td class="ctr no">no tool</td></tr>
+  </table>
+
+  <p><code>llama3.2:3b</code> is the standout here — it called <code>search_online</code> for <em>"What is 2 + 2?"</em>, waited 160 seconds, and came back with: <em>"The answer to 2 + 2 is indeed 4, not 5."</em> Nobody proposed 5. There's no 5 anywhere in the conversation. It read like the model was arguing with a claim that only existed inside its own search results.</p>
+
+  <h3>Knowing when a tool <em>is</em> needed</h3>
+
+  <p>Flip it around — four tasks that genuinely require live information (Bitcoin's price, LangGraph's purpose, Ollama's supported platforms, LangChain's latest release) — and a different pattern shows up:</p>
+
+  <table>
+    <tr><th>Model</th><th class="ctr">Bitcoin price</th><th class="ctr">LangGraph info</th><th class="ctr">Ollama docs</th><th class="ctr">LangChain release</th></tr>
+    <tr><td>qwen3:8b</td><td class="ctr yes">searched</td><td class="ctr yes">searched</td><td class="ctr yes">searched</td><td class="ctr yes">searched</td></tr>
+    <tr><td>granite4:micro</td><td class="ctr yes">searched</td><td class="ctr yes">searched</td><td class="ctr yes">searched</td><td class="ctr yes">searched</td></tr>
+    <tr><td>llama3.2:3b</td><td class="ctr yes">searched *</td><td class="ctr yes">searched</td><td class="ctr yes">searched</td><td class="ctr yes">guessed URL</td></tr>
+    <tr><td>gemma4:12b</td><td class="ctr yes">searched</td><td class="ctr yes">searched</td><td class="ctr yes">searched</td><td class="ctr yes">searched</td></tr>
+    <tr><td>qwen2.5-coder:7b</td><td class="ctr no">refused</td><td class="ctr no">refused</td><td class="ctr no">refused</td><td class="ctr no">refused</td></tr>
+  </table>
+
+  <p><code>qwen2.5-coder:7b</code> is the standout in the other direction — four for four refusals, on the exact tasks where a tool was actually the right call. Not "I don't know," but a polite decline every time:</p>
+
+  <div class="quote-card">
+    <div class="label">qwen2.5-coder:7b — session 20260824_185506, turn 4</div>
+    <div class="prompt">Me: "What is LangGraph used for?"</div>
+    <div class="reply-text">Reply: <em>"Sorry, I don't know what it is. I can't help you with this."</em><br>tool_calls: <strong>none.</strong></div>
+  </div>
+
+  <p>Same pattern on Bitcoin's price, Ollama's supported platforms, and LangChain's release — each one a flat "I'm not able to provide that" with a suggestion to go search myself, despite having <code>search_online</code> bound and ready. Across this entire twelve-turn session, it called a tool exactly zero times.</p>
+
+  <p>* — <code>llama3.2:3b</code>'s Bitcoin answer deserves its own line, because it's stranger than a simple miss:</p>
+
+  <div class="quote-card">
+    <div class="label">llama3.2:3b — session 20260824_164958, turn 5</div>
+    <div class="prompt">Me: "What is the current price of Bitcoin?"</div>
+    <pre class="trace">tool_call: search_online(query="current Bitcoin price")</pre>
+    <div class="reply-text">Reply: <em>"Unfortunately, I'm not allowed to fetch the current price of Bitcoin directly... (Source: CoinMarketCap)"</em></div>
+  </div>
+
+  <p>It called the tool, then told me it wasn't allowed to, then cited a source anyway. I can't tell from the log whether it ignored its own tool result, misread it, or something else — only that the final answer directly contradicts the fact that a search happened one line above it.</p>
+
+  <h3>The failure that needed a restart</h3>
+
+  <p>This is the one that actually stopped my test battery. Asked who NVIDIA's current CEO is — the same question every other model answered correctly in under six seconds each — <code>granite4:micro</code> produced this:</p>
+
+  <div class="quote-card">
+    <div class="label">granite4:micro — session 20260824_152229, turn 7</div>
+    <div class="prompt">Me: "Who is the current CEO of NVIDIA?"</div>
+    <pre class="trace">****_****Jeff Hinton** (though Hinton is a former executive and researcher, the head of the company is currently **_**_**_**_**_**_**_**_**_**_**_**_**_**_**_**_**_**...
+[this repeating fragment continued for roughly 300 seconds before I cancelled it]</pre>
+    <div class="reply-text">It also opened with the wrong name — Hinton isn't NVIDIA's CEO — before collapsing into a repeating token loop. I retried the same question. It ran for 1,611 seconds (nearly 27 minutes), came back with an empty string, and I closed the app and started a new process for the rest of the battery.</div>
+  </div>
+
+  <p>Whatever happened here isn't a hallucination in the usual sense — it's a decoding failure, the model getting stuck repeating a token pattern instead of finishing a sentence. It's also the reason this model's data comes from two separate sessions instead of one clean run.</p>
+
+  <h3>The trivial question that took fifteen minutes</h3>
+
+  <p>Later, on a totally different model, the simplest possible question in my entire list produced the widest latency spread I saw all round. Here's every attempt at <em>"What is 2 + 2?"</em>, in order:</p>
+
+  <div class="chart">
+    <div class="bar-row"><span class="name">qwen2.5-coder:7b</span><div class="bar-track"><div class="bar-fill" style="width:0.3%"></div></div><span class="bar-val">2.9s</span></div>
+    <div class="bar-row"><span class="name">granite4:micro</span><div class="bar-track"><div class="bar-fill" style="width:0.6%"></div></div><span class="bar-val">5.1s</span></div>
+    <div class="bar-row"><span class="name">llama3.2:3b</span><div class="bar-track"><div class="bar-fill warn" style="width:18.5%"></div></div><span class="bar-val">160.3s (unnecessary search)</span></div>
+    <div class="bar-row"><span class="name">qwen3:8b</span><div class="bar-track"><div class="bar-fill" style="width:48.9%"></div></div><span class="bar-val">422.9s</span></div>
+    <div class="bar-row"><span class="name">gemma4:12b — attempt 1</span><div class="bar-track"><div class="bar-fill slow" style="width:1.7%"></div></div><span class="bar-val">14.6s — empty reply</span></div>
+    <div class="bar-row"><span class="name">gemma4:12b — attempt 2</span><div class="bar-track"><div class="bar-fill slow" style="width:40.2%"></div></div><span class="bar-val">348.3s — I cancelled it</span></div>
+    <div class="bar-row"><span class="name">gemma4:12b — attempt 3</span><div class="bar-track"><div class="bar-fill slow" style="width:58%"></div></div><span class="bar-val">502.5s — finally: "2 + 2 = 4"</span></div>
+    <div class="chart-legend">
+      <span>Bar length scaled to gemma4:12b's third attempt (864.9s combined across all three tries for the same question).</span>
+    </div>
+  </div>
+
+  <p><code>gemma4:12b</code> needed three attempts and roughly 14.5 minutes of combined wall-clock time to answer 2 + 2. Nothing about the question changed between attempts. This is the same failure signature I saw from this model in my first round — an empty reply, then a hang I had to cancel — just landing on a different, even more trivial task this time.</p>
+
+  <h3>Asking versus guessing</h3>
+
+  <p>My filesystem tool's instructions explicitly tell a model to ask which drive to search rather than assume one. <code>qwen3:8b</code> followed that literally — maybe too literally. Across five straight filesystem-flavored requests, it never once called <code>find_file</code>:</p>
+
+  <div class="quote-card">
+    <div class="label">qwen3:8b — session 20260824_123411, turn 12</div>
+    <div class="prompt">Me: "Search the web for the latest version of LangGraph, then find the directory on my computer where I keep my LangGraph projects."</div>
+    <div class="reply-text">It did neither half. No search, no <code>find_file</code> call — just a request for me to specify the drive and folder name before it would do anything at all.</div>
+  </div>
+
+  <p>Compare that to <code>llama3.2:3b</code> and <code>granite4:micro</code>, which defaulted to a drive (usually the one I'd used earlier) and just tried. When they were right, that's a noticeably better experience than being interrogated first. When they were wrong, it was quietly wrong instead of visibly cautious — <code>granite4:micro</code>, asked to find "my latest report," got no real match, and rather than saying so, confidently named one specific file as <em>"the most relevant report file to you"</em> out of a long list of only vaguely related results (an old Conda internals file, a crash-reporter executable, a handful of other unrelated matches). It wasn't lying — the file is real, and it is technically named something with "report" in it — but calling it "the most relevant" to my request was a judgment call the tool's fuzzy match never actually supported.</p>
+
+  <h3>The file it shouldn't have known about — twice</h3>
+
+  <p>This is the finding I couldn't fully explain in my first round, and I've now watched it happen again under conditions where my earlier explanation doesn't apply.</p>
+
+  <p>The setup: I have a real file at <code>D:\Testing\NewTesting\EmptyFolder\tim-article.txt</code> — note the filename really is spelled "tim," not "time." In my first round, <code>qwen2.5-coder:7b</code> named that exact path, typo included, with zero tool calls logged — and I couldn't rule out that it had somehow inherited the answer from a shared conversation thread with another model. This round, I closed that loophole: fresh process, nothing shared, first message in the session. It named the file again:</p>
+
+  <div class="quote-card">
+    <div class="label">qwen2.5-coder:7b — session 20260824_185506, turn 10 (fresh process, first mention of this file)</div>
+    <div class="prompt">Me: "Find the file named tim-article on my computer drive D"</div>
+    <div class="reply-text">Reply: <em>"The file 'tim-article' is located at D:\Testing\NewTesting\EmptyFolder\tim-article.txt."</em><br>tool_calls: <strong>none.</strong></div>
+  </div>
+
+  <p>Given that this same model refused every single tool call elsewhere in this exact session — including ones it plainly needed — I don't think this is a case of quiet, unlogged tool use. My best working theory now is that <code>qwen2.5-coder:7b</code> isn't reliably emitting native tool calls through this particular Ollama/LangChain integration at all, and is answering everything from its own training instead. That would explain the refusals. It does not explain how it got this specific, unusual, machine-specific path right twice in a row. I don't have an answer for that part. I'm reporting it, not explaining it.</p>
+
+  <h2>Surprises</h2>
+
+  <p><strong>The over-cautious model and the over-eager model failed the same task in opposite directions.</strong> Told to search the web and then locate a project directory, <code>qwen3:8b</code> did neither half of the job and asked for clarification instead. Other models did the search half correctly and then either guessed at the filesystem half or asked more narrowly, only for the part they actually couldn't infer. Being cautious about one tool bled into not using an unrelated tool it clearly should have used.</p>
+
+  <p><strong>Two different models produced two different kinds of "stuck."</strong> <code>granite4:micro</code> got stuck mid-generation, repeating a token fragment for minutes until I cancelled it. <code>gemma4:12b</code> got stuck between generation and response, returning nothing at all, sometimes after mere seconds and sometimes after most of an hour. Neither looks like the other, and neither looks like a normal wrong answer.</p>
+
+  <p><strong>The model that never uses its tools is also the model that produced the single hardest-to-explain correct answer, twice.</strong> I don't think that's a coincidence I can resolve from log data. It might just be a coincidence, full stop — a real file path is a small enough space that a lucky guess isn't impossible. But "lucky twice, in the exact same idiosyncratic way, in independent sessions" is exactly the kind of thing I'd want to look at with proper tracing before I either believed it or dismissed it.</p>
+
+  <h2>What I learned</h2>
+
+  <ul>
+    <li><strong>Fixing my methodology surfaced sharper findings, not messier ones.</strong> Running one model per process, instead of relaying through shared memory, didn't wash out the interesting behavior — it made the attribution cleaner. I now know these patterns belong to the model, not to context bleeding from whoever ran before it.</li>
+    <li><strong>Tool restraint and tool coverage are two separate dials, and a model can have the wrong setting on either one independently.</strong> <code>qwen2.5-coder:7b</code> has restraint turned all the way up — to the point of never engaging its tools even when it should. <code>llama3.2:3b</code> has it turned down — reaching for a tool to answer 2 + 2. Neither setting is "smarter"; they're just miscalibrated in different directions.</li>
+    <li><strong>A wrong answer and a broken answer are different failure classes, and they need different fixes.</strong> Granite4:micro's repetition loop and gemma4:12b's empty replies aren't reasoning mistakes — an agent built on top of these models needs a timeout and a retry policy regardless of which model is running, because this isn't a "pick a better model" problem.</li>
+    <li><strong>Silent, confident guessing is worse than asking, but asking has a real cost too.</strong> I don't think either extreme I saw this round is the right default. qwen3:8b's refusal to guess a drive protected me from a wrong answer, but it also produced a "did nothing" turn on a request that was half-answerable. The models that guessed got more done and were occasionally wrong about it in ways I wouldn't have noticed without reading the tool trace myself.</li>
+  </ul>
+
+  <h2>Limitations</h2>
+
+  <ul>
+    <li><strong>Five of six models this round, not six.</strong> <code>qwen3-vl:8b-instruct</code> didn't get a fresh-process run in this batch.</li>
+    <li><strong>Two sessions needed a restart</strong> after a failure (granite4:micro's repetition loop, gemma4:12b's hang), which is itself informative but means I can't call every model's dataset "one uninterrupted run."</li>
+    <li><strong>Small sample, still.</strong> Roughly 9-14 comparable turns per model. Enough to see a pattern repeat, not enough to put a percentage on anything.</li>
+    <li><strong>Same hardware constraint as before</strong> — a laptop with no discrete GPU, running Q4_K_M quantized weights. Every timing number is a reflection of that machine, not a general claim about these models.</li>
+    <li><strong>The qwen2.5-coder:7b file-path finding is reported, not solved.</strong> I ruled out my first-round explanation (shared context) with this round's fresh-process replication, but I don't have a replacement explanation yet.</li>
+  </ul>
+
+  <h2>What I want to test next</h2>
+
+  <ol>
+    <li><strong>Isolate whether <code>qwen2.5-coder:7b</code> supports native tool-calling through this integration at all</strong> — a minimal, single-tool, single-turn test outside the full agent, to see if it ever emits a real tool call under any circumstance.</li>
+    <li><strong>Capture full raw message traces</strong>, specifically for that model's file-path answers, to see if there's a code path I'm not accounting for.</li>
+    <li><strong>Add a timeout and retry layer to the agent itself</strong>, so a repetition-loop or empty-reply failure doesn't require me to manually cancel and restart the process.</li>
+    <li><strong>Re-run the "ask vs. guess" filesystem tasks with a rule that sits between the two extremes</strong> — try the most likely drive, but say so explicitly, instead of silently guessing or refusing to act at all.</li>
+    <li><strong>Repeat the exact same battery again, unchanged</strong>, to see how much of this round's specific pattern (which model stalls, which one over-searches) reproduces a third time versus varying run to run.</li>
+  </ol>
+
+  <hr class="sep">
+
+  <p style="font-size:0.9rem; color:var(--sub); font-style:italic;">Second draft, built from session logs collected after switching to one fresh process per model. Excerpts are quoted verbatim from the JSON logs; personally identifying file paths from my own machine have been generalized. Where I couldn't explain something, I've said so instead of filling the gap.</p>
+
+</div>
+</body>
+</html>

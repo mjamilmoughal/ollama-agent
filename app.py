@@ -45,13 +45,22 @@ SESSIONS_DIR = Path(__file__).resolve().parent / "sessions"
 PT_USER, PT_ACCENT, PT_MUTED = "ansigreen", "ansicyan", "ansibrightblack"
 
 SYSTEM_PROMPT = (
-    "You have two tools: search_online (quick web search, short snippets) and "
-    "fetch_url (reads one full page in detail). Search first for current or "
+    "You have four tools: search_online (quick web search, short snippets), "
+    "fetch_url (reads one full page in detail), find_file (searches a local "
+    "drive for a file or folder by name), and read_file (reads a local file's "
+    "content by exact path, paginated by line). Search first for current or "
     "factual questions; if the snippets aren't detailed or credible enough to "
-    "answer confidently, fetch one of the returned URLs before answering. "
-    "When calling fetch_url, copy the exact 'https://...' URL string from a "
-    "search_online result verbatim — never a placeholder or description. "
-    "Say which source you used."
+    "answer confidently, fetch one of the returned URLs before answering. When "
+    "calling fetch_url, copy the exact 'https://...' URL string from a "
+    "search_online result verbatim — never a placeholder or description. Say "
+    "which source you used. Before calling find_file, you must ask the user "
+    "which drive to search (e.g. 'C' or 'D') unless they already said — never "
+    "guess or default to a drive, especially not C: since it's mostly "
+    "irrelevant OS files. When asked about a local file's content, use "
+    "find_file first if you don't have its exact path, then read_file — if "
+    "read_file's result says there's more to read, keep calling it with the "
+    "next offset until you've seen the whole file before answering, so your "
+    "understanding is based on its complete content, not just the first chunk."
 )
 
 COMMANDS = {
@@ -61,7 +70,7 @@ COMMANDS = {
     "/exit": "Quit the chat (also /quit)",
 }
 
-TOOL_ICONS = {"search_online": "🔍", "fetch_url": "📄"}
+TOOL_ICONS = {"search_online": "🔍:", "fetch_url": "📄:", "find_file": "🗂️:", "read_file": "📖:"}
 
 
 class SessionState:
@@ -321,28 +330,21 @@ def extract_usage(meta: dict | None) -> dict:
     }
 
 
-def render_reply_panel(model_name: str, text: str, elapsed: float, streaming: bool, meta: dict | None = None) -> Panel:
+def format_status(text: str, elapsed: float, meta: dict | None = None) -> str:
     usage = extract_usage(meta)
-
     if usage["input_tokens"] is not None and usage["output_tokens"] is not None:
         token_part = f"↑{usage['input_tokens']} ↓{usage['output_tokens']}"
         if usage["tokens_per_second"] is not None:
             token_part += f" · {usage['tokens_per_second']:.0f} tok/s"
     else:
         token_part = f"~{len(text.split())} tok"
+    return f"{elapsed:.1f}s · {token_part}"
 
-    body = Markdown(text) if text.strip() else Text("(empty response)", style="dim")
-    status = f"{elapsed:.1f}s · {token_part}"
-    subtitle = f"[dim italic]{status} · streaming…[/dim italic]" if streaming else f"[dim]{status}[/dim]"
-    return Panel(
-        body,
-        title=f"Agent: {model_name}",
-        title_align="left",
-        subtitle=subtitle,
-        subtitle_align="right",
-        border_style="cyan" if streaming else "magenta",
-        box=box.ROUNDED,
-    )
+
+def print_reply(model_name: str, text: str, elapsed: float, meta: dict | None = None) -> None:
+    console.print(f"[bold cyan]● {model_name}[/bold cyan]")
+    console.print(Markdown(text) if text.strip() else Text("(empty response)", style="dim"))
+    console.print(f"[dim]{format_status(text, elapsed, meta)}[/dim]")
 
 
 def chat_loop(models: list[str]) -> None:
@@ -408,6 +410,8 @@ def chat_loop(models: list[str]) -> None:
                 console.print(f"[red]Unknown command[/red] '{user_text}'. Type [bold]/help[/bold] for a list.")
             else:
                 full_reply = ""
+                printed_len = 0
+                streaming_started = False
                 final_meta: dict = {}
                 tool_events: list[dict] = []
                 fake_call_announced = False
@@ -415,59 +419,97 @@ def chat_loop(models: list[str]) -> None:
                 error: Exception | None = None
                 start_time = time.monotonic()
                 spinner = Spinner("dots", text=Text(" thinking...", style="italic cyan"))
+                live = Live(spinner, console=console, refresh_per_second=12, transient=True)
+                live.start()
                 try:
-                    with Live(spinner, console=console, refresh_per_second=12, transient=True) as live:
-                        for chunk in stream_reply(graph_app, user_text):
-                            tool_calls = getattr(chunk, "tool_calls", None) or []
-                            if tool_calls:
-                                for call in tool_calls:
-                                    name = call.get("name")
-                                    args = call.get("args") or {}
-                                    tool_events.append({"tool": name, "args": args})
-                                    detail = args.get("query") or args.get("url") or ""
-                                    icon = TOOL_ICONS.get(name, "🔧")
-                                    label = (name or "tool").replace("_", " ")
-                                    console.print(f"[dim]{icon} {label}: [italic]'{detail}'[/italic]…[/dim]")
+                    for chunk in stream_reply(graph_app, user_text):
+                        tool_calls = getattr(chunk, "tool_calls", None) or []
+                        if tool_calls:
+                            if streaming_started:
+                                console.print()
+                                streaming_started = False
+                            if not live.is_started:
+                                live.start()
+                            for call in tool_calls:
+                                name = call.get("name")
+                                args = call.get("args") or {}
+                                tool_events.append({"tool": name, "args": args})
+                                detail = args.get("query") or args.get("url") or ""
+                                icon = TOOL_ICONS.get(name, "🔧")
+                                label = (name or "tool").replace("_", " ")
+                                console.print(f"[dim]{icon} {label}: [italic]'{detail}'[/italic]…[/dim]")
+                            spinner.update(text=Text(" reading results...", style="italic cyan"))
+                            live.update(spinner)
+                            continue
+                        if isinstance(chunk, ToolMessage):
+                            full_reply = ""
+                            printed_len = 0
+                            fake_call_announced = False
+                            if streaming_started:
+                                console.print()
+                                streaming_started = False
+                            if not live.is_started:
+                                live.start()
+                            live.update(spinner)
+                            continue
+                        if chunk.content:
+                            full_reply += chunk.content
+                        if not full_reply:
+                            continue
+
+                        fake_match = FAKE_CALL_PREFIX_RE.match(full_reply)
+                        if fake_match:
+                            if not fake_call_announced:
+                                name = fake_match.group(1)
+                                icon = TOOL_ICONS.get(name, "🔧")
+                                label = name.replace("_", " ")
+                                console.print(f"[dim]{icon} {label}: [italic]'…'[/italic] (as text, no native tool-calling)[/dim]")
                                 spinner.update(text=Text(" reading results...", style="italic cyan"))
-                                live.update(spinner)
-                                continue
-                            if isinstance(chunk, ToolMessage):
-                                full_reply = ""
-                                fake_call_announced = False
-                                continue
-                            if chunk.content:
-                                full_reply += chunk.content
-                            if not full_reply:
-                                continue
+                                fake_call_announced = True
+                            live.update(spinner)
+                            continue
 
-                            fake_match = FAKE_CALL_PREFIX_RE.match(full_reply)
-                            if fake_match:
-                                if not fake_call_announced:
-                                    name = fake_match.group(1)
-                                    icon = TOOL_ICONS.get(name, "🔧")
-                                    label = name.replace("_", " ")
-                                    console.print(f"[dim]{icon} {label}: [italic]'…'[/italic] (as text, no native tool-calling)[/dim]")
-                                    spinner.update(text=Text(" reading results...", style="italic cyan"))
-                                    fake_call_announced = True
-                                live.update(spinner)
-                                continue
+                        if chunk.response_metadata:
+                            final_meta = chunk.response_metadata
 
-                            if chunk.response_metadata:
-                                final_meta = chunk.response_metadata
-                            elapsed = time.monotonic() - start_time
-                            live.update(render_reply_panel(model_name, full_reply, elapsed, streaming=True, meta=final_meta))
+                        if not streaming_started:
+                            live.stop()
+                            console.print(f"[bold cyan]● {model_name}[/bold cyan]")
+                            streaming_started = True
+
+                        new_text = full_reply[printed_len:]
+                        if new_text:
+                            console.print(new_text, end="", markup=False, highlight=False, soft_wrap=True)
+                            printed_len = len(full_reply)
                 except KeyboardInterrupt:
                     cancelled = True
                 except Exception as exc:
                     error = exc
+                finally:
+                    if live.is_started:
+                        live.stop()
 
                 elapsed = time.monotonic() - start_time
                 if error is not None:
+                    if streaming_started:
+                        console.print()
                     console.print(f"[bold red]Error talking to model:[/bold red] {error}")
                 elif cancelled:
+                    if streaming_started:
+                        console.print()
                     console.print("[dim]⎋ cancelled[/dim]")
+                elif streaming_started:
+                    block_lines = 1 + len(Text(full_reply).wrap(console, console.width))
+                    if console.is_terminal and block_lines <= console.size.height:
+                        console.file.write(f"\x1b[{block_lines}A\x1b[J")
+                        console.file.flush()
+                        print_reply(model_name, full_reply, elapsed, final_meta)
+                    else:
+                        console.print()
+                        console.print(f"[dim]{format_status(full_reply, elapsed, final_meta)}[/dim]")
+                    state.turn_count += 1
                 else:
-                    console.print(render_reply_panel(model_name, full_reply, elapsed, streaming=False, meta=final_meta))
+                    print_reply(model_name, full_reply, elapsed, final_meta)
                     state.turn_count += 1
 
                 logger.log_turn(
@@ -481,6 +523,8 @@ def chat_loop(models: list[str]) -> None:
                     ollama_metrics=final_meta,
                     **extract_usage(final_meta),
                 )
+
+                console.print(Rule(style="dim cyan"))
 
             console.print()
     finally:

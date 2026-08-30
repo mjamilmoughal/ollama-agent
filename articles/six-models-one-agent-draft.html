@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Draft: I Gave Six Local LLMs the Same Agent</title>
+<style>
+  :root {
+    --ink: #1c1c1c;
+    --sub: #55554f;
+    --line: #e2e0d8;
+    --bg: #fdfcf9;
+    --card: #f6f4ee;
+    --accent: #8a5a3b;
+    --mono-bg: #2b2a27;
+    --mono-ink: #eae6da;
+    --good: #3f6b4a;
+    --bad: #a33f2e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif;
+    line-height: 1.65;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 56px 24px 120px; }
+  .kicker {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: 700;
+    margin-bottom: 14px;
+  }
+  h1.title {
+    font-size: 2.3rem;
+    line-height: 1.15;
+    margin: 0 0 14px;
+    font-weight: 700;
+  }
+  .dek {
+    font-size: 1.15rem;
+    color: var(--sub);
+    font-style: italic;
+    margin: 0 0 40px;
+    line-height: 1.5;
+  }
+  h2 {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 1.5rem;
+    margin: 52px 0 18px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--line);
+  }
+  h3 {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 1.15rem;
+    margin: 30px 0 12px;
+    color: var(--accent);
+  }
+  p { margin: 0 0 18px; font-size: 1.08rem; }
+  ul, ol { margin: 0 0 18px; padding-left: 26px; }
+  li { margin-bottom: 8px; font-size: 1.08rem; }
+  a { color: var(--accent); }
+  strong { font-weight: 700; }
+  code {
+    font-family: 'SF Mono', Consolas, Menlo, monospace;
+    background: var(--card);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.88em;
+  }
+  .quote-card {
+    background: var(--card);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin: 20px 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 0.95rem;
+  }
+  .quote-card .label {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--sub);
+    margin-bottom: 8px;
+  }
+  .quote-card .prompt {
+    color: var(--sub);
+    margin-bottom: 10px;
+    font-style: italic;
+  }
+  pre.trace {
+    background: var(--mono-bg);
+    color: var(--mono-ink);
+    padding: 14px 16px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-family: 'SF Mono', Consolas, Menlo, monospace;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .reply-text {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0 28px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 0.92rem;
+  }
+  th, td {
+    text-align: left;
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--sub);
+    border-bottom: 2px solid var(--ink);
+  }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .tag {
+    display: inline-block;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 20px;
+    letter-spacing: 0.02em;
+  }
+  .tag.ok { background: #e4efe6; color: var(--good); }
+  .tag.bad { background: #f5e5e1; color: var(--bad); }
+  .tag.warn { background: #f6ecd9; color: #8a6416; }
+  .callout {
+    background: #fff9ec;
+    border: 1px solid #ecdcb0;
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin: 24px 0;
+    font-size: 1rem;
+  }
+  .callout .label {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-weight: 700;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #8a6416;
+    margin-bottom: 8px;
+  }
+  hr.sep {
+    border: none;
+    border-top: 1px solid var(--line);
+    margin: 48px 0;
+  }
+  /* --- bar chart --- */
+  .chart {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    margin: 24px 0 8px;
+  }
+  .chart-group {
+    margin-bottom: 22px;
+  }
+  .chart-group h4 {
+    font-size: 0.85rem;
+    margin: 0 0 8px;
+    color: var(--sub);
+    font-weight: 700;
+  }
+  .bar-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+    font-size: 0.85rem;
+  }
+  .bar-row .name {
+    width: 130px;
+    flex-shrink: 0;
+    text-align: right;
+    color: var(--ink);
+  }
+  .bar-track {
+    flex: 1;
+    background: var(--card);
+    border-radius: 3px;
+    height: 18px;
+    position: relative;
+  }
+  .bar-fill {
+    background: var(--accent);
+    height: 100%;
+    border-radius: 3px;
+  }
+  .bar-fill.empty-reply { background: repeating-linear-gradient(45deg, var(--bad), var(--bad) 4px, #e2b3a8 4px, #e2b3a8 8px); }
+  .bar-fill.anomaly { background: repeating-linear-gradient(45deg, #c99b3e, #c99b3e 4px, #f0d9a3 4px, #f0d9a3 8px); }
+  .bar-val {
+    width: 74px;
+    flex-shrink: 0;
+    font-variant-numeric: tabular-nums;
+    color: var(--sub);
+    font-size: 0.8rem;
+  }
+  .chart-legend {
+    font-size: 0.78rem;
+    color: var(--sub);
+    margin-top: 10px;
+  }
+  .chart-legend span { margin-right: 16px; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  .meta-byline {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 0.85rem;
+    color: var(--sub);
+    margin-bottom: 40px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--line);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="kicker">Building intelligent systems — measuring what works, what fails, and why</div>
+  <h1 class="title">I Gave Six Local LLMs the Same Agent. They Behaved Very Differently.</h1>
+  <p class="dek">I built a small agent with Ollama, LangChain, and LangGraph, gave six local models the same tools and tasks, and logged everything. One of them tried to read a file that was never mentioned. Two of them wrote a different biography for the same real person using the same search tool. And one answer I still can't fully explain.</p>
+
+  <div class="meta-byline">DRAFT — not for publication. Internal notes and evidence citations are marked inline for review before this goes out.</div>
+
+  <p>I built something.</p>
+
+  <p>It's a small terminal agent: Ollama for local inference, LangGraph for the tool-calling loop, LangChain underneath. It has two tools — one to search the web, one to search my filesystem and read what it finds. Nothing fancy. The interesting part isn't the agent. It's that I pointed six different local models at the exact same agent, gave them the same jobs, and logged every tool call, every argument, every reply, and every timing number along the way.</p>
+
+  <p>Then I went back through the logs. Not my memory of how the session felt — the actual JSON, turn by turn.</p>
+
+  <p>Here's the first thing that stopped me. I'd asked a model a plain arithmetic riddle — no files, no filesystem, nothing to look up. It answered correctly. And, in the same turn, it also called my file-reading tool on a path that doesn't exist:</p>
+
+  <div class="quote-card">
+    <div class="label">llama3.2:3b — session 20260824_005220, turn 12</div>
+    <div class="prompt">User: "A farmer has 17 sheep. All but 9 run away. How many sheep are left? Explain your reasoning step by step."</div>
+    <pre class="trace">tool_call: read_file(path="C:\Users\User\Documents\sheep_left.txt", offset=1, limit=10)</pre>
+    <div class="reply-text">Nobody mentioned a file called <code>sheep_left.txt</code>. It doesn't exist. Nothing about the question calls for a filesystem tool at all. The model just... reached for it.</div>
+  </div>
+
+  <p>That's the question this piece is actually about: not "which of my six local models is best," but what happens to a model's behavior once you put it inside an agent loop and give it tools it can misuse. A chat reply is a closed box — right or wrong, you mostly can't see the reasoning. An agent trace is not. You can watch a model decide, wrongly, that a plain word problem needs a file it invented on the spot.</p>
+
+  <h2>The agent</h2>
+
+  <p>The setup is deliberately plain. A LangGraph <code>StateGraph</code> with two nodes: <code>chat</code>, which calls whichever Ollama model is currently selected via <code>ChatOllama(...).bind_tools(...)</code>, and <code>tools</code>, a standard LangGraph <code>ToolNode</code>. They loop — chat, decide whether a tool is needed, run it if so, chat again — until the model produces a final answer with no more tool calls. A <code>MemorySaver</code> checkpointer keeps conversation history.</p>
+
+  <p>Two tools were bound for this experiment:</p>
+
+  <ul>
+    <li><code>search_online</code> — a DuckDuckGo web search returning five short title/snippet/URL results.</li>
+    <li><code>find_file</code> / <code>read_file</code> — a pair of filesystem tools I built specifically to let a model locate a file by name (fuzzy-matched, one drive at a time) and then read it, paginated, to actually understand its content.</li>
+  </ul>
+
+  <p>One architectural detail turned out to matter more than I expected, and I want to flag it before showing you any results: the chat loop uses a <strong>single fixed thread ID</strong> for the whole process. That means when I switch models mid-session with <code>/model</code> — which is how most of this experiment was actually run, cycling through models inside one continuous session — the new model inherits the <em>entire</em> prior conversation, including other models' real tool outputs. This is not a side note. It changes how several of the results below have to be read, and I'll come back to it.</p>
+
+  <p>Some models here support Ollama's native tool-calling; some don't. For the ones that don't, I added a fallback that detects when a model prints a tool call as plain JSON text instead of using the real mechanism, and converts it into a real one. That fallback matters for one of the findings below too.</p>
+
+  <h2>The six models</h2>
+
+  <p>Every model was already installed locally via Ollama. Here's what's actually running, pulled directly from <code>ollama show</code> — not estimated:</p>
+
+  <table>
+    <tr><th>Model</th><th class="num">Params</th><th>Quantization</th><th class="num">Context</th><th>Role in these sessions</th></tr>
+    <tr><td><code>qwen3:8b</code></td><td class="num">8.2B</td><td>Q4_K_M</td><td class="num">40,960</td><td>Full relay participant</td></tr>
+    <tr><td><code>qwen3-vl:8b-instruct</code></td><td class="num">8.8B</td><td>Q4_K_M</td><td class="num">262,144</td><td>Full relay participant</td></tr>
+    <tr><td><code>qwen2.5-coder:7b</code></td><td class="num">7.6B</td><td>Q4_K_M</td><td class="num">32,768</td><td>Full relay participant</td></tr>
+    <tr><td><code>gemma4:12b</code></td><td class="num">11.9B</td><td>Q4_K_M</td><td class="num">262,144</td><td>Full relay participant</td></tr>
+    <tr><td><code>llama3.2:3b</code></td><td class="num">3.2B</td><td>Q4_K_M</td><td class="num">131,072</td><td>Full relay participant</td></tr>
+    <tr><td><code>granite4:micro</code></td><td class="num">3.4B</td><td>Q4_K_M</td><td class="num">131,072</td><td>Full relay participant</td></tr>
+  </table>
+
+  <p>All six are 4-bit quantized (Q4_K_M) — I'm not comparing full-precision weights, I'm comparing what actually runs at a usable speed on my hardware. And that hardware matters enough to say up front: this machine has no discrete GPU. It's a 13th-gen Intel Core i7-1365U laptop running on integrated graphics. Every latency number in this article is a laptop-CPU number, not a datacenter number. <strong>[TODO: decide how prominently to caveat this — see Limitations.]</strong></p>
+
+  <h2>The experiment</h2>
+
+  <p>What stayed constant: the agent code, the two tools, the system prompt, the environment, and — for the core comparison — the actual task text.</p>
+
+  <p>What changed: only the model, switched live with <code>/model</code> inside the same running session, or across separate sessions with the same prompts retyped.</p>
+
+  <p>I want to be straight about how this data actually came together, because it's not a pre-registered benchmark — it's retrofitted from real usage logs. I have 21 saved sessions going back to when this agent had no tools at all. Most of that early material is me testing the CLI itself, not testing models against each other, and I've left it out of the core comparison below. Two models that briefly ran before I settled on the current six-model lineup (<code>qwen2.5-coder:3b</code>, <code>llama3.1:8b</code>) are excluded entirely, since they were never part of a same-task comparison with the others.</p>
+
+  <p>The actual comparable evidence — the same handful of tasks, run against multiple models, close enough together to mean something — lives mostly in two sessions from August 24th, where I cycled through models with <code>/model</code> and re-asked (or asked equivalent versions of) the same five tasks:</p>
+
+  <ol>
+    <li>A sheep-counting riddle with a wording trap ("all but 9 run away") — no tool needed.</li>
+    <li>Write a Python function returning the two most frequent numbers in a list, with complexity analysis — no tool needed.</li>
+    <li>Explain quantum computing in exactly 100 words with formatting constraints — no tool needed.</li>
+    <li>"Search online and find who is Jamil Moughal, get his website if available" — requires <code>search_online</code>.</li>
+    <li>"Find a file named [OllamaTest / time-article] on the D drive and tell me what it's about" — requires <code>find_file</code>, ideally followed by <code>read_file</code>.</li>
+  </ol>
+
+  <p>The point of tasks 1–3 is that they need <em>no</em> tool at all — they're there to see whether a model can tell the difference. The point of 4–5 is to watch actual tool selection, argument construction, and result interpretation happen.</p>
+
+  <h2>What happened</h2>
+
+  <h3>Tool selection: knowing when <em>not</em> to call a tool</h3>
+
+  <p>This is where the sharpest, most reproducible difference showed up. Given the sheep riddle and the Python function task — back to back, same session, same prior context — <code>qwen3:8b</code> and <code>granite4:micro</code> called no tools at all. <code>qwen3:8b</code> even said so explicitly in its answer: <em>"No tools were needed, as this is a straightforward arithmetic problem."</em></p>
+
+  <p><code>llama3.2:3b</code>, given the identical two prompts in the identical session, called <code>read_file</code> on a nonexistent path both times:</p>
+
+  <div class="quote-card">
+    <div class="label">llama3.2:3b — same session, turn 11</div>
+    <div class="prompt">User: "Write a Python function that takes a list of integers and returns the two numbers that appear most frequently. Explain the time and space complexity."</div>
+    <pre class="trace">tool_call: read_file(path="C:\Users\User\Documents\file.txt", offset=1, limit=10)</pre>
+  </div>
+
+  <p>Both invented paths sit in the same nonexistent <code>C:\Users\User\Documents\</code> folder, and both filenames loosely echo words from the question (<code>sheep_left.txt</code> for the sheep riddle, generic <code>file.txt</code> for the code task). It answered both questions correctly anyway — the tool call didn't derail the final answer, it just happened, unprompted, alongside it.</p>
+
+  <h3>Tool execution: when the fallback breaks down</h3>
+
+  <p>The same model, on the 100-word quantum-computing task, produced this as its entire visible reply:</p>
+
+  <div class="quote-card">
+    <div class="label">llama3.2:3b — session 20260824_005220, turn 9</div>
+    <div class="prompt">User: "Explain quantum computing to a 12-year-old in exactly 100 words..."</div>
+    <pre class="trace">{"name":"search_online","parameters":{"query":"Explain quantum computing to a 12-year-old in exactly 100 words. Use one analogy, include exactly three bullet points, and do not use the words "quantum" or \"computer\" more than once."}}</pre>
+    <div class="reply-text">Zero tool calls were logged for this turn. The malformed JSON (note the unescaped quotes around <code>quantum</code>) never matched my fallback parser's pattern, so it never became a real tool call — it just got printed, verbatim, as the answer. No search happened. No explanation happened. The user got nothing.</div>
+  </div>
+
+  <p>This is a different failure from the phantom file reads above. That was an unnecessary but harmless tool call riding alongside a correct answer. This is the tool-call fallback mechanism itself failing open — a broken attempt at calling a tool that never resolves into either a real tool call or a real answer.</p>
+
+  <h3>Tool interpretation: reading results vs. inventing them</h3>
+
+  <p>The clearest side-by-side here is the "find and explain the file" task. Six models, same prompt, same file — a real 12KB text file at <code>D:\Testing\NewTesting\EmptyFolder\tim-article.txt</code> (note: the real filename is spelled <code>tim-article</code>, not <code>time-article</code> as I'd typed it — the fuzzy match in <code>find_file</code> covered the gap).</p>
+
+  <div class="quote-card">
+    <div class="label">granite4:micro — session 20260824_094013, turn 9</div>
+    <div class="prompt">User: "in my D drive there is a file with the name time-article, find it where it is and what it is about"</div>
+    <pre class="trace">tool_call: find_file(name="time-article", drive="D", kind="file")</pre>
+    <div class="reply-text">Only <code>find_file</code> was called — no <code>read_file</code> — yet the answer quotes three specific "lines" from the file verbatim, with line numbers, as if it had read them.</div>
+  </div>
+
+  <p>Compare that to <code>qwen3:8b</code> two turns earlier in the same relay, which called both tools and hedged accordingly: <em>"Based on the first few lines... Would you like me to continue reading the notebook line by line?"</em> — appropriately uncertain, because it had only actually read ten lines.</p>
+
+  <p>Here's the wrinkle I flagged earlier: by the time <code>granite4:micro</code> ran, <code>qwen3:8b</code>'s real <code>read_file</code> output was already sitting in the shared conversation thread. So I can't fully tell, from the log alone, whether <code>granite4:micro</code> fabricated those quoted lines outright, or lifted them from context it never explicitly re-verified. Either way, it presented content as freshly retrieved that its own tool-call record doesn't support — and that distinction (grounded vs. ungrounded confidence) doesn't show up anywhere in the visible answer. That's the actual finding: not "it was wrong," but "you cannot tell it didn't check from the answer text alone."</p>
+
+  <h3>Off-target answers</h3>
+
+  <p><code>gemma4:12b</code>, asked to find a file <em>and</em> explain it, called <code>find_file</code>, <code>read_file</code>, <em>and</em> <code>search_online</code> all in one turn — and then answered with the current Bitcoin price:</p>
+
+  <div class="quote-card">
+    <div class="label">gemma4:12b — session 20260824_002131, turn 1</div>
+    <div class="prompt">User: "find a file in D drive with the name OllamaTest and find out what it is about"</div>
+    <pre class="trace">tool_calls: find_file(...), read_file(...), search_online(query="current price of Bitcoin (BTC) in USD")</pre>
+    <div class="reply-text">Reply: "The current price of Bitcoin (BTC) is approximately $63,691.30..." — no mention of the file at all.</div>
+  </div>
+
+  <p>The tools were called correctly. The final synthesis step is what went off the rails — it answered a question nobody asked, using a tool call it also made but that had nothing to do with the user's request.</p>
+
+  <h2>Surprises</h2>
+
+  <p><strong>The same real person, the same search tool, five different biographies.</strong> I asked multiple models, across sessions, to search for and describe me. Same tool, same intent. I got five materially different answers:</p>
+
+  <table>
+    <tr><th>Model</th><th>Claimed role</th><th>Notable divergence</th></tr>
+    <tr><td>qwen3:8b</td><td>Full-Stack Engineer, Germany</td><td>IoT, cloud, distributed systems framing</td></tr>
+    <tr><td>granite4:micro</td><td>Senior .NET Engineer at Hach</td><td>"Founder of Heurica" — not mentioned by others</td></tr>
+    <tr><td>llama3.2:3b</td><td>Founder / Senior .NET Engineer at Heurica</td><td>Explicitly claims resume and GitHub "not found online" — granite4:micro found both</td></tr>
+    <tr><td>qwen2.5-coder:7b</td><td>Software engineer, 10+ yrs</td><td>Emphasizes JavaScript/C#/Node.js/Angular — not mentioned by others</td></tr>
+    <tr><td>qwen3-vl:8b-instruct</td><td>Software engineer, 10+ yrs, Europe/US</td><td>"Worker-centric AI" framing, Düsseldorf location — unique to this answer</td></tr>
+  </table>
+
+  <p>None of these are wildly wrong, and I'm not going to adjudicate my own biography here. The point is narrower and more useful: giving five models the same web-search tool did not converge them on a shared set of facts. Each one synthesized a plausible-sounding, confidently stated, slightly different answer from noisy search snippets. The tool didn't ground them in the same reality — it gave each of them different raw material to be equally confident about.</p>
+
+  <p><strong>One answer I can't explain.</strong> This is the one I keep coming back to. <code>qwen2.5-coder:7b</code>, asked to find and describe the same <code>tim-article.txt</code> file, logged <strong>zero tool calls</strong> — and answered with the exact real path, typo and all:</p>
+
+  <div class="quote-card">
+    <div class="label">qwen2.5-coder:7b — session 20260824_094013, turn 7 (first mention of this file in the session)</div>
+    <div class="prompt">User: "in my D drive there is a file with the name time-article, find it where it is and what it is about"</div>
+    <div class="reply-text">Reply: <em>"The file named 'time-article' is located at <code>D:\Testing\NewTesting\EmptyFolder\tim-article.txt</code>. If you'd like to read the content of this file, please let me know..."</em><br><br>tool_calls logged: <strong>none.</strong></div>
+  </div>
+
+  <p>I checked. That path is real — I ran <code>Get-ChildItem</code> against my own D drive while writing this. The file is genuinely named <code>tim-article.txt</code>, not <code>time-article.txt</code>, matching the model's answer exactly, including the discrepancy from my own (differently-typo'd) prompt. This was also the first turn in the session where this file was mentioned at all, so there's no shared-context explanation available the way there was for granite4:micro above. I don't have an explanation for this from the log. I'm not going to invent one. It's flagged below as something to re-test with fuller tracing before I'd trust it either way.</p>
+
+  <p><strong>gemma4:12b goes silent, unpredictably.</strong> In the four-model relay session, it returned an empty reply to the sheep riddle after 653 seconds, then an empty reply to the Python task after only 18 seconds — two different failure latencies, same empty-string result. In a separate solo session with the identical prompts, it answered both correctly. Same model, same questions, inconsistent outcome. In that same solo session, two separate attempts at the quantum-computing prompt had to be manually cancelled — one after roughly 7.3 hours outstanding.</p>
+
+  <h2>What I learned</h2>
+
+  <p>A few things held up across the evidence, not just as first impressions:</p>
+
+  <ul>
+    <li><strong>Knowing when not to use a tool is its own capability, separate from getting the final answer right.</strong> <code>llama3.2:3b</code> answered the sheep riddle and the Python task correctly <em>and</em> called a nonexistent file both times. Tool restraint and answer correctness didn't move together.</li>
+    <li><strong>A tool call doesn't mean the answer is grounded in what the tool returned.</strong> More than once, a model's confidence in its final text wasn't visibly different whether it had actually read a file or not. If you only look at the reply, you can't tell.</li>
+    <li><strong>Shared conversation state across model switches is a real confound, not a footnote.</strong> Several of the "impressively accurate, zero-tool-call" answers in this dataset are plausibly explained by a later model inheriting an earlier model's real tool output in the same thread — which means those turns are not independent trials of "would this model solve this from nothing." I didn't fully catch this until reading the logs closely, which is itself the finding: it's easy to misread agent behavior as more (or less) capable than it is when the surrounding system isn't accounted for.</li>
+    <li><strong>Raw latency on this hardware swamps almost every other signal.</strong> Response times in the comparable sessions ranged from about 18 seconds to over 14 minutes for a single non-tool answer, with two outright multi-minute-to-multi-hour hangs from one model. None of that is a fair reflection of "model quality" — it's a laptop iGPU running four to twelve billion parameters at 4-bit quantization. I'm showing the numbers because they're real and they shaped what I could even test, not because they rank the models.</li>
+  </ul>
+
+  <div class="callout">
+    <div class="label">On the numbers below</div>
+    These are the actual <code>elapsed_seconds</code> values logged for the four-model relay session (20260824_005220). I'm showing them to make the latency point concrete, not as a performance leaderboard — see the hardware note above.
+  </div>
+
+  <div class="chart">
+    <div class="chart-group">
+      <h4>Sheep riddle (no tool needed)</h4>
+      <div class="bar-row"><span class="name">qwen3:8b</span><div class="bar-track"><div class="bar-fill" style="width:20.1%"></div></div><span class="bar-val">174.0s</span></div>
+      <div class="bar-row"><span class="name">granite4:micro</span><div class="bar-track"><div class="bar-fill" style="width:3.7%"></div></div><span class="bar-val">32.3s</span></div>
+      <div class="bar-row"><span class="name">llama3.2:3b</span><div class="bar-track"><div class="bar-fill anomaly" style="width:21.3%"></div></div><span class="bar-val">184.3s *</span></div>
+      <div class="bar-row"><span class="name">gemma4:12b</span><div class="bar-track"><div class="bar-fill empty-reply" style="width:75.4%"></div></div><span class="bar-val">652.9s †</span></div>
+    </div>
+    <div class="chart-group">
+      <h4>Two-most-frequent Python function (no tool needed)</h4>
+      <div class="bar-row"><span class="name">qwen3:8b</span><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div><span class="bar-val">866.1s</span></div>
+      <div class="bar-row"><span class="name">granite4:micro</span><div class="bar-track"><div class="bar-fill" style="width:8.7%"></div></div><span class="bar-val">75.7s</span></div>
+      <div class="bar-row"><span class="name">llama3.2:3b</span><div class="bar-track"><div class="bar-fill anomaly" style="width:17.3%"></div></div><span class="bar-val">149.6s *</span></div>
+      <div class="bar-row"><span class="name">gemma4:12b</span><div class="bar-track"><div class="bar-fill empty-reply" style="width:2.1%"></div></div><span class="bar-val">18.2s †</span></div>
+    </div>
+    <div class="chart-group">
+      <h4>Quantum computing, 100 words (no tool needed)</h4>
+      <div class="bar-row"><span class="name">qwen3:8b</span><div class="bar-track"><div class="bar-fill" style="width:24.6%"></div></div><span class="bar-val">213.0s</span></div>
+      <div class="bar-row"><span class="name">granite4:micro</span><div class="bar-track"><div class="bar-fill" style="width:17.1%"></div></div><span class="bar-val">148.1s</span></div>
+      <div class="bar-row"><span class="name">llama3.2:3b</span><div class="bar-track"><div class="bar-fill empty-reply" style="width:18.2%"></div></div><span class="bar-val">157.8s ‡</span></div>
+    </div>
+    <div class="chart-group">
+      <h4>"Search: who is Jamil Moughal" (needs search_online)</h4>
+      <div class="bar-row"><span class="name">qwen3:8b</span><div class="bar-track"><div class="bar-fill" style="width:28.7%"></div></div><span class="bar-val">248.4s</span></div>
+      <div class="bar-row"><span class="name">granite4:micro</span><div class="bar-track"><div class="bar-fill" style="width:22.1%"></div></div><span class="bar-val">191.7s</span></div>
+      <div class="bar-row"><span class="name">llama3.2:3b</span><div class="bar-track"><div class="bar-fill" style="width:14.9%"></div></div><span class="bar-val">129.1s</span></div>
+    </div>
+    <div class="chart-legend">
+      <span><span class="swatch" style="background:var(--accent)"></span>completed normally</span>
+      <span><span class="swatch anomaly" style="background:#c99b3e"></span>* completed, but also fired a phantom <code>read_file</code> call on a nonexistent path</span>
+      <span><span class="swatch empty-reply" style="background:var(--bad)"></span>† empty-string reply (no answer produced)</span>
+      <span>‡ malformed unparsed tool-call JSON printed as the entire answer</span>
+    </div>
+  </div>
+
+  <h2>Limitations</h2>
+
+  <ul>
+    <li><strong>Small sample.</strong> Each model saw roughly 3–6 comparable tasks. This is nowhere near enough to compute a reliable per-model success rate, and I haven't tried to.</li>
+    <li><strong>Not independent trials.</strong> Because model switches share one conversation thread, later models in a relay session can see earlier models' real tool outputs. Several findings above are explicitly caveated for this reason.</li>
+    <li><strong>One machine, no discrete GPU, one quantization level.</strong> Every timing number reflects a 13th-gen Intel laptop on integrated graphics, running Q4_K_M quantized weights. Different hardware, a different quantization, or a different Ollama version could change the latency picture substantially without changing anything about the models' reasoning.</li>
+    <li><strong>I picked the tasks.</strong> Five tasks, chosen by me, mostly on one day. This is not a benchmark suite and shouldn't be read as one.</li>
+    <li><strong>Ollama version, system prompt, and tool descriptions are all part of what's being measured.</strong> Change any of them and some of this could shift. I'm not claiming these six models behave this way in general — only that they behaved this way, in this agent, on this day, on this machine.</li>
+    <li><strong>One finding — the <code>qwen2.5-coder:7b</code> zero-tool-call correct path — is genuinely unexplained.</strong> I'm reporting it as observed, not as understood.</li>
+  </ul>
+
+  <h2>What I want to test next</h2>
+
+  <ol>
+    <li><strong>Re-run the same tasks with a fresh thread per model</strong> instead of one shared session — this is the single biggest methodological gap this round exposed, and it's directly testable.</li>
+    <li><strong>Capture the full raw message trace</strong>, not just user message / final reply / tool calls, specifically to chase down what actually happened on the unexplained <code>qwen2.5-coder:7b</code> turn.</li>
+    <li><strong>Repeat the same prompt against the same model multiple times</strong> to see how much of gemma4:12b's empty-reply pattern is actually intermittent versus something I could reproduce on demand.</li>
+    <li><strong>Run the same battery on hardware with a real GPU</strong>, to separate "this model is slow" from "this laptop is slow."</li>
+    <li><strong>Add a task battery large enough to make quantitative tool-call accuracy meaningful</strong> — this round wasn't big enough to responsibly put a number on it.</li>
+  </ol>
+
+  <hr class="sep">
+
+  <p style="font-size:0.9rem; color:var(--sub); font-style:italic;">This is a first draft built directly from saved session logs, cross-checked against the live filesystem where I could verify a claim independently. Excerpts are quoted verbatim from the JSON logs. Where I couldn't explain something, I've said so instead of filling the gap.</p>
+
+</div>
+</body>
+</html>
