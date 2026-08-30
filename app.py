@@ -66,11 +66,47 @@ SYSTEM_PROMPT = (
 COMMANDS = {
     "/model": "Switch the active Ollama model (name, number, or fuzzy match)",
     "/clear": "Clear conversation history",
+    "/task": "Mark the start of a new logical task (groups turns for analysis)",
+    "/rate": "Tag the last reply's outcome: /rate correct|incorrect|partial",
+    "/failure": "Tag the last reply's failure mode, e.g. /failure wrong_tool",
+    "/necessary": "Mark the last reply's tool call(s) as necessary",
+    "/unnecessary": "Mark the last reply's tool call(s) as unnecessary",
+    "/note": "Attach a freeform note to the last reply",
     "/help": "Show this help message",
     "/exit": "Quit the chat (also /quit)",
 }
 
 TOOL_ICONS = {"search_online": "🔍:", "fetch_url": "📄:", "find_file": "🗂️:", "read_file": "📖:"}
+
+# Vocabulary suggested for /failure; freeform text is also accepted.
+FAILURE_MODES = [
+    "malformed_tool_call",
+    "wrong_tool",
+    "wrong_arguments",
+    "ignored_tool_result",
+    "hallucinated",
+    "infinite_loop",
+    "other",
+]
+
+# A turn with this many tool calls (or a run of identical repeated calls) is flagged
+# as a possible infinite loop for manual review.
+TOOL_CALL_LOOP_THRESHOLD = 8
+IDENTICAL_CALL_REPEAT_THRESHOLD = 3
+
+# Heuristic only: every tool in tools/ puts its failure wording at the very start of
+# the returned string, so a marker found in the first 200 chars suggests the call
+# failed. This flags candidates for manual review -- it is not a correctness signal.
+_TOOL_ERROR_MARKERS = (
+    "could not", "cannot ", "error", "failed", "no results found", "no content read",
+    "missing a", "invalid ", "not found", "is not a", "is not an", "does not exist",
+    "unsupported url scheme", "refusing to fetch",
+)
+
+
+def _looks_like_tool_error(text: str | None) -> bool:
+    lowered = (text or "").strip().lower()[:200]
+    return any(marker in lowered for marker in _TOOL_ERROR_MARKERS)
 
 
 class SessionState:
@@ -79,6 +115,7 @@ class SessionState:
     def __init__(self, model_name: str):
         self.model_name = model_name
         self.turn_count = 0
+        self.task_id = 1
         self.start_time = time.monotonic()
 
 
@@ -112,6 +149,16 @@ class SessionLogger:
         self.data["turns"].append({"timestamp": datetime.now().isoformat(timespec="seconds"), **fields})
         self._write()
 
+    def annotate_last_turn(self, **fields) -> bool:
+        """Apply manual analysis tags (outcome, failure_mode, tool_call_necessary, note) to the most recent turn."""
+        if not self.data["turns"]:
+            return False
+        turn = self.data["turns"][-1]
+        turn.setdefault("annotation", {"outcome": None, "failure_mode": None, "tool_call_necessary": None, "note": None})
+        turn["annotation"].update(fields)
+        self._write()
+        return True
+
     def close(self) -> None:
         self.data["ended_at"] = datetime.now().isoformat(timespec="seconds")
         self._write()
@@ -135,6 +182,18 @@ class SlashCompleter(Completer):
             for name in self._models:
                 if partial.lower() in name.lower():
                     yield Completion(name, start_position=-len(partial))
+            return
+        if text.startswith("/rate "):
+            partial = text[len("/rate ") :]
+            for opt in ("correct", "incorrect", "partial"):
+                if opt.startswith(partial.lower()):
+                    yield Completion(opt, start_position=-len(partial))
+            return
+        if text.startswith("/failure "):
+            partial = text[len("/failure ") :]
+            for opt in FAILURE_MODES:
+                if opt.startswith(partial.lower()):
+                    yield Completion(opt, start_position=-len(partial))
             return
         for cmd in COMMANDS:
             if cmd.startswith(text):
@@ -290,6 +349,10 @@ def print_help() -> None:
         "[dim]Tip: just ask the agent to search online — it can search, then read a full page for more "
         "detail on its own, even on models without native tool-calling.[/dim]"
     )
+    console.print(
+        "[dim]Tip: for analysis, tag the last reply with /rate correct|incorrect|partial, /failure <mode>, "
+        "/necessary or /unnecessary, and /note <text>. /task marks a new task boundary.[/dim]"
+    )
 
 
 def format_duration(seconds: float) -> str:
@@ -330,21 +393,23 @@ def extract_usage(meta: dict | None) -> dict:
     }
 
 
-def format_status(text: str, elapsed: float, meta: dict | None = None) -> str:
-    usage = extract_usage(meta)
-    if usage["input_tokens"] is not None and usage["output_tokens"] is not None:
-        token_part = f"↑{usage['input_tokens']} ↓{usage['output_tokens']}"
-        if usage["tokens_per_second"] is not None:
+def format_status(text: str, elapsed: float, usage: dict | None = None) -> str:
+    """`usage` is a dict with input_tokens/output_tokens/tokens_per_second, e.g. from extract_usage() or a turn's totals."""
+    usage = usage or {}
+    input_tokens, output_tokens = usage.get("input_tokens"), usage.get("output_tokens")
+    if input_tokens is not None and output_tokens is not None:
+        token_part = f"↑{input_tokens} ↓{output_tokens}"
+        if usage.get("tokens_per_second") is not None:
             token_part += f" · {usage['tokens_per_second']:.0f} tok/s"
     else:
         token_part = f"~{len(text.split())} tok"
     return f"{elapsed:.1f}s · {token_part}"
 
 
-def print_reply(model_name: str, text: str, elapsed: float, meta: dict | None = None) -> None:
+def print_reply(model_name: str, text: str, elapsed: float, usage: dict | None = None) -> None:
     console.print(f"[bold cyan]● {model_name}[/bold cyan]")
     console.print(Markdown(text) if text.strip() else Text("(empty response)", style="dim"))
-    console.print(f"[dim]{format_status(text, elapsed, meta)}[/dim]")
+    console.print(f"[dim]{format_status(text, elapsed, usage)}[/dim]")
 
 
 def chat_loop(models: list[str]) -> None:
@@ -406,6 +471,41 @@ def chat_loop(models: list[str]) -> None:
                     graph_app = build_app(model_name, checkpointer)
                     state.model_name = model_name
                     console.print(f"[green]Switched to[/green] [bold cyan]{model_name}[/bold cyan]")
+            elif user_text == "/task":
+                state.task_id += 1
+                logger.log_event("task_boundary", task_id=state.task_id)
+                console.print(f"[yellow]Started task #{state.task_id}.[/yellow]")
+            elif user_text.startswith("/rate"):
+                arg = user_text[len("/rate") :].strip().lower()
+                if arg not in ("correct", "incorrect", "partial"):
+                    console.print("[yellow]Usage: /rate correct|incorrect|partial[/yellow]")
+                elif logger.annotate_last_turn(outcome=arg):
+                    console.print(f"[green]Tagged last reply's outcome as[/green] [bold]{arg}[/bold].")
+                else:
+                    console.print("[yellow]No reply yet to rate.[/yellow]")
+            elif user_text.startswith("/failure"):
+                arg = user_text[len("/failure") :].strip().lower()
+                if not arg:
+                    console.print(f"[yellow]Usage: /failure <mode>, e.g. one of: {', '.join(FAILURE_MODES)}[/yellow]")
+                elif logger.annotate_last_turn(failure_mode=arg):
+                    console.print(f"[green]Tagged last reply's failure mode as[/green] [bold]{arg}[/bold].")
+                else:
+                    console.print("[yellow]No reply yet to tag.[/yellow]")
+            elif user_text in ("/necessary", "/unnecessary"):
+                necessary = user_text == "/necessary"
+                if logger.annotate_last_turn(tool_call_necessary=necessary):
+                    label = "necessary" if necessary else "unnecessary"
+                    console.print(f"[green]Tagged last reply's tool call(s) as[/green] [bold]{label}[/bold].")
+                else:
+                    console.print("[yellow]No reply yet to tag.[/yellow]")
+            elif user_text.startswith("/note"):
+                arg = user_text[len("/note") :].strip()
+                if not arg:
+                    console.print("[yellow]Usage: /note <text>[/yellow]")
+                elif logger.annotate_last_turn(note=arg):
+                    console.print("[green]Note added to last reply.[/green]")
+                else:
+                    console.print("[yellow]No reply yet to annotate.[/yellow]")
             elif user_text.startswith("/"):
                 console.print(f"[red]Unknown command[/red] '{user_text}'. Type [bold]/help[/bold] for a list.")
             else:
@@ -413,7 +513,12 @@ def chat_loop(models: list[str]) -> None:
                 printed_len = 0
                 streaming_started = False
                 final_meta: dict = {}
-                tool_events: list[dict] = []
+                llm_calls: list[dict] = []       # one entry per LLM generation round in this turn
+                tool_events: list[dict] = []     # one entry per tool call (native or text-based) in this turn
+                malformed_attempts: list[str] = []  # text that looked like a tool call but never parsed into one
+                pending_tool_indices: list[int] = []  # tool_events indices awaiting a ToolMessage result
+                tool_call_starts: dict[int, float] = {}
+                round_had_tool_calls = False
                 fake_call_announced = False
                 cancelled = False
                 error: Exception | None = None
@@ -423,8 +528,42 @@ def chat_loop(models: list[str]) -> None:
                 live.start()
                 try:
                     for chunk in stream_reply(graph_app, user_text):
+                        # response_metadata arrives on its own chunk at the end of every LLM generation
+                        # round (tool-deciding rounds included) -- capture it unconditionally, before any
+                        # `continue` below, or intermediate rounds' token usage is silently lost.
+                        if chunk.response_metadata:
+                            usage = extract_usage(chunk.response_metadata)
+                            llm_calls.append({
+                                "done_reason": chunk.response_metadata.get("done_reason"),
+                                **usage,
+                                "raw_metrics": chunk.response_metadata,
+                            })
+                            final_meta = chunk.response_metadata
+                            if fake_call_announced and not round_had_tool_calls:
+                                parsed = parse_fake_tool_call(full_reply)
+                                if parsed:
+                                    idx = len(tool_events)
+                                    tool_events.append({
+                                        "index": idx,
+                                        "tool": parsed["name"],
+                                        "args": parsed["args"],
+                                        "native": False,
+                                        "raw_call_text": full_reply,
+                                        "result": None,
+                                        "result_chars": None,
+                                        "looks_like_error": None,
+                                        "duration_seconds": None,
+                                        "retry_of_index": None,
+                                    })
+                                    pending_tool_indices.append(idx)
+                                    tool_call_starts[idx] = time.monotonic()
+                                else:
+                                    malformed_attempts.append(full_reply)
+                            round_had_tool_calls = False
+
                         tool_calls = getattr(chunk, "tool_calls", None) or []
                         if tool_calls:
+                            round_had_tool_calls = True
                             if streaming_started:
                                 console.print()
                                 streaming_started = False
@@ -433,7 +572,21 @@ def chat_loop(models: list[str]) -> None:
                             for call in tool_calls:
                                 name = call.get("name")
                                 args = call.get("args") or {}
-                                tool_events.append({"tool": name, "args": args})
+                                idx = len(tool_events)
+                                tool_events.append({
+                                    "index": idx,
+                                    "tool": name,
+                                    "args": args,
+                                    "native": True,
+                                    "raw_call_text": None,
+                                    "result": None,
+                                    "result_chars": None,
+                                    "looks_like_error": None,
+                                    "duration_seconds": None,
+                                    "retry_of_index": None,
+                                })
+                                pending_tool_indices.append(idx)
+                                tool_call_starts[idx] = time.monotonic()
                                 detail = args.get("query") or args.get("url") or ""
                                 icon = TOOL_ICONS.get(name, "🔧")
                                 label = (name or "tool").replace("_", " ")
@@ -442,9 +595,28 @@ def chat_loop(models: list[str]) -> None:
                             live.update(spinner)
                             continue
                         if isinstance(chunk, ToolMessage):
+                            result_name = getattr(chunk, "name", None)
+                            match_idx = None
+                            if result_name:
+                                for i in pending_tool_indices:
+                                    if tool_events[i]["tool"] == result_name:
+                                        match_idx = i
+                                        break
+                            if match_idx is None and pending_tool_indices:
+                                match_idx = pending_tool_indices[0]
+                            if match_idx is not None:
+                                pending_tool_indices.remove(match_idx)
+                                ev = tool_events[match_idx]
+                                ev["result"] = chunk.content
+                                ev["result_chars"] = len(chunk.content or "")
+                                ev["looks_like_error"] = _looks_like_tool_error(chunk.content)
+                                call_start = tool_call_starts.pop(match_idx, None)
+                                ev["duration_seconds"] = round(time.monotonic() - call_start, 3) if call_start is not None else None
+
                             full_reply = ""
                             printed_len = 0
                             fake_call_announced = False
+                            round_had_tool_calls = False
                             if streaming_started:
                                 console.print()
                                 streaming_started = False
@@ -469,9 +641,6 @@ def chat_loop(models: list[str]) -> None:
                             live.update(spinner)
                             continue
 
-                        if chunk.response_metadata:
-                            final_meta = chunk.response_metadata
-
                         if not streaming_started:
                             live.stop()
                             console.print(f"[bold cyan]● {model_name}[/bold cyan]")
@@ -489,6 +658,43 @@ def chat_loop(models: list[str]) -> None:
                     if live.is_started:
                         live.stop()
 
+                # Chain retries: for each tool call, point at the previous call to the same tool in this
+                # turn (if any), so a walk back through retry_of_index reconstructs the correction chain.
+                last_index_by_tool: dict[str, int] = {}
+                for ev in tool_events:
+                    ev["retry_of_index"] = last_index_by_tool.get(ev["tool"])
+                    if ev["tool"]:
+                        last_index_by_tool[ev["tool"]] = ev["index"]
+
+                def _repeated_identical_run(events: list[dict], min_repeat: int = IDENTICAL_CALL_REPEAT_THRESHOLD) -> bool:
+                    run_key, run_len = None, 0
+                    for e in events:
+                        key = (e["tool"], json.dumps(e["args"], sort_keys=True, default=str))
+                        run_len = run_len + 1 if key == run_key else 1
+                        run_key = key
+                        if run_len >= min_repeat:
+                            return True
+                    return False
+
+                total_input_tokens = sum((c["input_tokens"] or 0) for c in llm_calls) if llm_calls else None
+                total_output_tokens = sum((c["output_tokens"] or 0) for c in llm_calls) if llm_calls else None
+                total_eval_seconds = sum((c["raw_metrics"].get("eval_duration") or 0) for c in llm_calls) / 1e9
+                totals = {
+                    "input_tokens": total_input_tokens,
+                    "output_tokens": total_output_tokens,
+                    "total_tokens": (total_input_tokens + total_output_tokens) if llm_calls else None,
+                    "tokens_per_second": round(total_output_tokens / total_eval_seconds, 1) if total_output_tokens and total_eval_seconds else None,
+                    "llm_call_count": len(llm_calls),
+                    "tool_call_count": len(tool_events),
+                    "unique_tools_used": sorted({e["tool"] for e in tool_events if e["tool"]}),
+                    "retry_count": sum(1 for e in tool_events if e["retry_of_index"] is not None),
+                }
+                auto_flags = {
+                    "malformed_tool_call": bool(malformed_attempts),
+                    "tool_error": any(e["looks_like_error"] for e in tool_events),
+                    "possible_infinite_loop": len(tool_events) >= TOOL_CALL_LOOP_THRESHOLD or _repeated_identical_run(tool_events),
+                }
+
                 elapsed = time.monotonic() - start_time
                 if error is not None:
                     if streaming_started:
@@ -503,25 +709,33 @@ def chat_loop(models: list[str]) -> None:
                     if console.is_terminal and block_lines <= console.size.height:
                         console.file.write(f"\x1b[{block_lines}A\x1b[J")
                         console.file.flush()
-                        print_reply(model_name, full_reply, elapsed, final_meta)
+                        print_reply(model_name, full_reply, elapsed, totals)
                     else:
                         console.print()
-                        console.print(f"[dim]{format_status(full_reply, elapsed, final_meta)}[/dim]")
+                        console.print(f"[dim]{format_status(full_reply, elapsed, totals)}[/dim]")
                     state.turn_count += 1
                 else:
-                    print_reply(model_name, full_reply, elapsed, final_meta)
+                    print_reply(model_name, full_reply, elapsed, totals)
                     state.turn_count += 1
 
+                if auto_flags["possible_infinite_loop"] or auto_flags["malformed_tool_call"]:
+                    flagged = [k for k, v in auto_flags.items() if v]
+                    console.print(f"[yellow]⚑ auto-flagged: {', '.join(flagged)} -- see /failure to confirm/correct.[/yellow]")
+
                 logger.log_turn(
+                    task_id=state.task_id,
                     model=model_name,
                     user_message=user_text,
                     assistant_reply=full_reply,
                     elapsed_seconds=round(elapsed, 3),
                     cancelled=cancelled,
                     error=str(error) if error else None,
+                    llm_calls=llm_calls,
                     tool_calls=tool_events,
-                    ollama_metrics=final_meta,
-                    **extract_usage(final_meta),
+                    malformed_attempts=malformed_attempts,
+                    totals=totals,
+                    auto_flags=auto_flags,
+                    annotation={"outcome": None, "failure_mode": None, "tool_call_necessary": None, "note": None},
                 )
 
                 console.print(Rule(style="dim cyan"))
