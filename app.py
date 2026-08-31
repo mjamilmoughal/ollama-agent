@@ -44,6 +44,27 @@ SESSIONS_DIR = Path(__file__).resolve().parent / "sessions"
 # so the input line and the panels always agree on a palette.
 PT_USER, PT_ACCENT, PT_MUTED = "ansigreen", "ansicyan", "ansibrightblack"
 
+# One shared visual language for the whole session: a single accent color and a small
+# set of role glyphs, reused by every print_* helper below instead of ad-hoc styling.
+ACCENT = "cyan"
+GLYPH_BULLET = "⏺"   # assistant replies and tool calls
+GLYPH_RESULT = "⎿"   # a tool call's result, indented under its bullet
+GLYPH_OK = "✓"
+GLYPH_WARN = "⚠"
+GLYPH_ERR = "✗"
+
+
+def print_ok(message: str) -> None:
+    console.print(f"[green]{GLYPH_OK}[/green] {message}")
+
+
+def print_warn(message: str) -> None:
+    console.print(f"[yellow]{GLYPH_WARN}[/yellow] {message}")
+
+
+def print_err(message: str) -> None:
+    console.print(f"[red]{GLYPH_ERR}[/red] {message}")
+
 SYSTEM_PROMPT = (
     "You have four tools: search_online (quick web search, short snippets), "
     "fetch_url (reads one full page in detail), find_file (searches a local "
@@ -76,7 +97,15 @@ COMMANDS = {
     "/exit": "Quit the chat (also /quit)",
 }
 
-TOOL_ICONS = {"search_online": "🔍:", "fetch_url": "📄:", "find_file": "🗂️:", "read_file": "📖:"}
+def _format_call_args(args: dict) -> str:
+    """Render tool call args as a compact function-call signature, e.g. query="paris weather"."""
+    parts = []
+    for key, value in args.items():
+        text = str(value)
+        if len(text) > 60:
+            text = text[:57] + "..."
+        parts.append(f'{key}="{text}"' if isinstance(value, str) else f"{key}={text}")
+    return ", ".join(parts)
 
 # Vocabulary suggested for /failure; freeform text is also accepted.
 FAILURE_MODES = [
@@ -258,10 +287,12 @@ def print_banner(model_count: int) -> None:
     plural = "s" if model_count != 1 else ""
     console.print(
         Panel(
-            Text("🦙  OLLAMA CHAT AGENT", style="bold cyan", justify="center"),
-            subtitle=f"[dim]{model_count} model{plural} available · powered by LangGraph[/dim]",
-            border_style="cyan",
-            box=box.DOUBLE,
+            f"[bold {ACCENT}]Ollama Agent[/bold {ACCENT}]\n"
+            f"[dim]{model_count} local model{plural} · LangGraph tool-calling[/dim]",
+            border_style="grey50",
+            box=box.ROUNDED,
+            padding=(0, 2),
+            expand=False,
         )
     )
 
@@ -313,45 +344,50 @@ def suggest_model(query: str, models: list[str]) -> str | None:
 
 
 def choose_model(models: list[str], current: str | None = None) -> str:
-    table = Table(box=box.SIMPLE_HEAVY, show_lines=False, header_style="bold magenta")
+    table = Table(box=box.SIMPLE, show_lines=False, header_style=f"bold {ACCENT}", show_edge=False, pad_edge=False)
     table.add_column("#", style="dim", width=3)
     table.add_column("Model")
     for i, name in enumerate(models, start=1):
-        marker = " [green](current)[/green]" if name == current else ""
+        marker = f" [green]{GLYPH_OK} current[/green]" if name == current else ""
         table.add_row(str(i), f"{name}{marker}")
     console.print(table)
 
-    choice = Prompt.ask("[bold yellow]Select a model[/bold yellow] (number or name)").strip()
+    choice = Prompt.ask(f"[bold {ACCENT}]❯[/bold {ACCENT}] Select a model (number or name)").strip()
     matched = match_model(choice, models)
     if matched:
         return matched
 
     suggestion = suggest_model(choice, models)
     if suggestion:
-        console.print(f"[yellow]Unknown model '{choice}'. Did you mean [bold]{suggestion}[/bold]?[/yellow]")
+        print_warn(f"Unknown model '{choice}'. Did you mean [bold]{suggestion}[/bold]?")
     else:
-        console.print(f"[red]Unknown model '{choice}'.[/red]")
+        print_err(f"Unknown model '{choice}'.")
     return current or models[0]
 
 
-def print_help() -> None:
-    table = Table(title="Commands", box=box.ROUNDED, header_style="bold cyan")
-    table.add_column("Command", style="bold yellow")
-    table.add_column("Description")
-    for cmd, desc in COMMANDS.items():
+ANALYSIS_COMMANDS = {"/task", "/rate", "/failure", "/necessary", "/unnecessary", "/note"}
+
+
+def _commands_table(title: str, commands: dict[str, str]) -> Table:
+    table = Table(title=title, title_style=f"bold {ACCENT}", title_justify="left", box=box.SIMPLE, header_style="dim", show_edge=False, pad_edge=False)
+    table.add_column("Command", style=f"bold {ACCENT}")
+    table.add_column("Description", style="dim")
+    for cmd, desc in commands.items():
         table.add_row(cmd, desc)
-    console.print(table)
+    return table
+
+
+def print_help() -> None:
+    chat_cmds = {k: v for k, v in COMMANDS.items() if k not in ANALYSIS_COMMANDS}
+    analysis_cmds = {k: v for k, v in COMMANDS.items() if k in ANALYSIS_COMMANDS}
+    console.print(_commands_table("Chat", chat_cmds))
+    console.print()
+    console.print(_commands_table("Analysis", analysis_cmds))
+    console.print()
+    console.print("[dim]↑/↓ recalls history · Tab completes commands and model names · Ctrl+C cancels a reply · Ctrl+D exits.[/dim]")
     console.print(
-        "[dim]Tip: ↑/↓ recalls history · Tab completes commands and model names · "
-        "Ctrl+C cancels a reply · Ctrl+D exits.[/dim]"
-    )
-    console.print(
-        "[dim]Tip: just ask the agent to search online — it can search, then read a full page for more "
+        "[dim]Just ask the agent to search online — it can search, then read a full page for more "
         "detail on its own, even on models without native tool-calling.[/dim]"
-    )
-    console.print(
-        "[dim]Tip: for analysis, tag the last reply with /rate correct|incorrect|partial, /failure <mode>, "
-        "/necessary or /unnecessary, and /note <text>. /task marks a new task boundary.[/dim]"
     )
 
 
@@ -366,15 +402,13 @@ def format_duration(seconds: float) -> str:
 
 def render_prompt_message() -> HTML:
     now = datetime.now().strftime("%H:%M:%S")
-    return HTML(
-        f"<{PT_MUTED}>{now}</{PT_MUTED}> <{PT_USER}><b>you</b></{PT_USER}> <{PT_ACCENT}>❯</{PT_ACCENT}> "
-    )
+    return HTML(f"<{PT_MUTED}>{now}</{PT_MUTED}> <{PT_USER}><b>❯</b></{PT_USER}> ")
 
 
 def render_toolbar(state: SessionState) -> HTML:
     clock = format_duration(time.monotonic() - state.start_time)
     return HTML(
-        f" <b>{state.model_name}</b>  ·  turn {state.turn_count}  ·  {clock}"
+        f" <{PT_ACCENT}><b>{state.model_name}</b></{PT_ACCENT}>  ·  turn {state.turn_count}  ·  {clock}"
         f"  ·  <{PT_MUTED}>/help · Ctrl+C cancel · Ctrl+D exit</{PT_MUTED}>"
     )
 
@@ -407,7 +441,7 @@ def format_status(text: str, elapsed: float, usage: dict | None = None) -> str:
 
 
 def print_reply(model_name: str, text: str, elapsed: float, usage: dict | None = None) -> None:
-    console.print(f"[bold cyan]● {model_name}[/bold cyan]")
+    console.print(f"[bold {ACCENT}]{GLYPH_BULLET} {model_name}[/bold {ACCENT}]")
     console.print(Markdown(text) if text.strip() else Text("(empty response)", style="dim"))
     console.print(f"[dim]{format_status(text, elapsed, usage)}[/dim]")
 
@@ -425,10 +459,13 @@ def chat_loop(models: list[str]) -> None:
         complete_while_typing=True,
     )
 
-    console.print(Rule(style="cyan"))
-    console.print(f"[dim]Chatting with[/dim] [bold cyan]{model_name}[/bold cyan]  [dim]· /help for commands[/dim]")
-    console.print(f"[dim]Logging this session to[/dim] [bold]{logger.path.relative_to(SESSIONS_DIR.parent)}[/bold]")
-    console.print(Rule(style="cyan"))
+    console.print(Rule(style="grey50"))
+    console.print(
+        f"[dim]model[/dim]  [bold {ACCENT}]{model_name}[/bold {ACCENT}]   "
+        f"[dim]log[/dim]  {logger.path.relative_to(SESSIONS_DIR.parent)}   "
+        f"[dim]· /help for commands[/dim]"
+    )
+    console.print()
 
     try:
         while True:
@@ -457,57 +494,57 @@ def chat_loop(models: list[str]) -> None:
                 graph_app = build_app(model_name, checkpointer)
                 state.turn_count = 0
                 logger.log_event("clear", model=model_name)
-                console.print("[yellow]Conversation history cleared.[/yellow]")
+                print_ok("Conversation history cleared.")
             elif user_text == "/model" or user_text.startswith("/model "):
                 arg = user_text[len("/model") :].strip()
                 matched = match_model(arg, models) if arg else choose_model(models, current=model_name)
                 if arg and not matched:
                     suggestion = suggest_model(arg, models)
                     hint = f" Did you mean [bold]{suggestion}[/bold]?" if suggestion else ""
-                    console.print(f"[yellow]Unknown model '{arg}'.{hint} Keeping [bold cyan]{model_name}[/bold cyan].[/yellow]")
+                    print_warn(f"Unknown model '{arg}'.{hint} Keeping [bold {ACCENT}]{model_name}[/bold {ACCENT}].")
                 else:
                     logger.log_event("model_switch", from_model=model_name, to_model=matched)
                     model_name = matched
                     graph_app = build_app(model_name, checkpointer)
                     state.model_name = model_name
-                    console.print(f"[green]Switched to[/green] [bold cyan]{model_name}[/bold cyan]")
+                    print_ok(f"Switched to [bold {ACCENT}]{model_name}[/bold {ACCENT}]")
             elif user_text == "/task":
                 state.task_id += 1
                 logger.log_event("task_boundary", task_id=state.task_id)
-                console.print(f"[yellow]Started task #{state.task_id}.[/yellow]")
+                print_ok(f"Started task #{state.task_id}.")
             elif user_text.startswith("/rate"):
                 arg = user_text[len("/rate") :].strip().lower()
                 if arg not in ("correct", "incorrect", "partial"):
-                    console.print("[yellow]Usage: /rate correct|incorrect|partial[/yellow]")
+                    print_warn("Usage: /rate correct|incorrect|partial")
                 elif logger.annotate_last_turn(outcome=arg):
-                    console.print(f"[green]Tagged last reply's outcome as[/green] [bold]{arg}[/bold].")
+                    print_ok(f"Tagged last reply's outcome as [bold]{arg}[/bold].")
                 else:
-                    console.print("[yellow]No reply yet to rate.[/yellow]")
+                    print_warn("No reply yet to rate.")
             elif user_text.startswith("/failure"):
                 arg = user_text[len("/failure") :].strip().lower()
                 if not arg:
-                    console.print(f"[yellow]Usage: /failure <mode>, e.g. one of: {', '.join(FAILURE_MODES)}[/yellow]")
+                    print_warn(f"Usage: /failure <mode>, e.g. one of: {', '.join(FAILURE_MODES)}")
                 elif logger.annotate_last_turn(failure_mode=arg):
-                    console.print(f"[green]Tagged last reply's failure mode as[/green] [bold]{arg}[/bold].")
+                    print_ok(f"Tagged last reply's failure mode as [bold]{arg}[/bold].")
                 else:
-                    console.print("[yellow]No reply yet to tag.[/yellow]")
+                    print_warn("No reply yet to tag.")
             elif user_text in ("/necessary", "/unnecessary"):
                 necessary = user_text == "/necessary"
                 if logger.annotate_last_turn(tool_call_necessary=necessary):
                     label = "necessary" if necessary else "unnecessary"
-                    console.print(f"[green]Tagged last reply's tool call(s) as[/green] [bold]{label}[/bold].")
+                    print_ok(f"Tagged last reply's tool call(s) as [bold]{label}[/bold].")
                 else:
-                    console.print("[yellow]No reply yet to tag.[/yellow]")
+                    print_warn("No reply yet to tag.")
             elif user_text.startswith("/note"):
                 arg = user_text[len("/note") :].strip()
                 if not arg:
-                    console.print("[yellow]Usage: /note <text>[/yellow]")
+                    print_warn("Usage: /note <text>")
                 elif logger.annotate_last_turn(note=arg):
-                    console.print("[green]Note added to last reply.[/green]")
+                    print_ok("Note added to last reply.")
                 else:
-                    console.print("[yellow]No reply yet to annotate.[/yellow]")
+                    print_warn("No reply yet to annotate.")
             elif user_text.startswith("/"):
-                console.print(f"[red]Unknown command[/red] '{user_text}'. Type [bold]/help[/bold] for a list.")
+                print_err(f"Unknown command '{user_text}'. Type [bold]/help[/bold] for a list.")
             else:
                 full_reply = ""
                 printed_len = 0
@@ -523,7 +560,7 @@ def chat_loop(models: list[str]) -> None:
                 cancelled = False
                 error: Exception | None = None
                 start_time = time.monotonic()
-                spinner = Spinner("dots", text=Text(" thinking...", style="italic cyan"))
+                spinner = Spinner("dots", text=Text(" thinking...", style=f"italic {ACCENT}"))
                 live = Live(spinner, console=console, refresh_per_second=12, transient=True)
                 live.start()
                 try:
@@ -587,11 +624,8 @@ def chat_loop(models: list[str]) -> None:
                                 })
                                 pending_tool_indices.append(idx)
                                 tool_call_starts[idx] = time.monotonic()
-                                detail = args.get("query") or args.get("url") or ""
-                                icon = TOOL_ICONS.get(name, "🔧")
-                                label = (name or "tool").replace("_", " ")
-                                console.print(f"[dim]{icon} {label}: [italic]'{detail}'[/italic]…[/dim]")
-                            spinner.update(text=Text(" reading results...", style="italic cyan"))
+                                console.print(f"[{ACCENT}]{GLYPH_BULLET}[/{ACCENT}] [bold]{name or 'tool'}[/bold]({_format_call_args(args)})")
+                            spinner.update(text=Text(" running...", style=f"italic {ACCENT}"))
                             live.update(spinner)
                             continue
                         if isinstance(chunk, ToolMessage):
@@ -613,6 +647,12 @@ def chat_loop(models: list[str]) -> None:
                                 call_start = tool_call_starts.pop(match_idx, None)
                                 ev["duration_seconds"] = round(time.monotonic() - call_start, 3) if call_start is not None else None
 
+                                preview = (chunk.content or "").strip().splitlines()[0] if chunk.content else ""
+                                if len(preview) > 90:
+                                    preview = preview[:87] + "..."
+                                result_style = "red" if ev["looks_like_error"] else "dim"
+                                console.print(f"  [{result_style}]{GLYPH_RESULT}[/{result_style}]  {preview or '(no output)'}")
+
                             full_reply = ""
                             printed_len = 0
                             fake_call_announced = False
@@ -633,17 +673,15 @@ def chat_loop(models: list[str]) -> None:
                         if fake_match:
                             if not fake_call_announced:
                                 name = fake_match.group(1)
-                                icon = TOOL_ICONS.get(name, "🔧")
-                                label = name.replace("_", " ")
-                                console.print(f"[dim]{icon} {label}: [italic]'…'[/italic] (as text, no native tool-calling)[/dim]")
-                                spinner.update(text=Text(" reading results...", style="italic cyan"))
+                                console.print(f"[{ACCENT}]{GLYPH_BULLET}[/{ACCENT}] [bold]{name}[/bold](…) [dim]as text, no native tool-calling[/dim]")
+                                spinner.update(text=Text(" running...", style=f"italic {ACCENT}"))
                                 fake_call_announced = True
                             live.update(spinner)
                             continue
 
                         if not streaming_started:
                             live.stop()
-                            console.print(f"[bold cyan]● {model_name}[/bold cyan]")
+                            console.print(f"[bold {ACCENT}]{GLYPH_BULLET} {model_name}[/bold {ACCENT}]")
                             streaming_started = True
 
                         new_text = full_reply[printed_len:]
@@ -699,7 +737,7 @@ def chat_loop(models: list[str]) -> None:
                 if error is not None:
                     if streaming_started:
                         console.print()
-                    console.print(f"[bold red]Error talking to model:[/bold red] {error}")
+                    print_err(f"Error talking to model: {error}")
                 elif cancelled:
                     if streaming_started:
                         console.print()
@@ -720,7 +758,7 @@ def chat_loop(models: list[str]) -> None:
 
                 if auto_flags["possible_infinite_loop"] or auto_flags["malformed_tool_call"]:
                     flagged = [k for k, v in auto_flags.items() if v]
-                    console.print(f"[yellow]⚑ auto-flagged: {', '.join(flagged)} -- see /failure to confirm/correct.[/yellow]")
+                    print_warn(f"auto-flagged: {', '.join(flagged)} — see /failure to confirm/correct.")
 
                 logger.log_turn(
                     task_id=state.task_id,
@@ -738,8 +776,6 @@ def chat_loop(models: list[str]) -> None:
                     annotation={"outcome": None, "failure_mode": None, "tool_call_necessary": None, "note": None},
                 )
 
-                console.print(Rule(style="dim cyan"))
-
             console.print()
     finally:
         logger.close()
@@ -748,23 +784,16 @@ def chat_loop(models: list[str]) -> None:
 def main() -> None:
     console.print()
     try:
-        with console.status("[cyan]Connecting to Ollama…[/cyan]", spinner="dots"):
+        with console.status(f"[{ACCENT}]Connecting to Ollama…[/{ACCENT}]", spinner="dots"):
             models = get_installed_models()
     except RuntimeError as exc:
-        console.print(Panel(f"[bold red]{exc}[/bold red]", border_style="red", box=box.ROUNDED, title="Connection error"))
+        print_err(str(exc))
         sys.exit(1)
 
     print_banner(len(models))
 
     if not models:
-        console.print(
-            Panel(
-                "[bold yellow]No local Ollama models found.[/bold yellow]\n"
-                "Pull one first, e.g. [bold]ollama pull llama3[/bold]",
-                border_style="yellow",
-                box=box.ROUNDED,
-            )
-        )
+        print_warn("No local Ollama models found. Pull one first, e.g. [bold]ollama pull llama3[/bold]")
         sys.exit(1)
 
     chat_loop(models)
