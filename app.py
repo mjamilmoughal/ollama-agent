@@ -441,7 +441,7 @@ def format_status(text: str, elapsed: float, usage: dict | None = None) -> str:
 
 
 def print_reply(model_name: str, text: str, elapsed: float, usage: dict | None = None) -> None:
-    console.print(f"[bold {ACCENT}]{GLYPH_BULLET} {model_name}[/bold {ACCENT}]")
+    console.print(f"[bold {ACCENT}]{GLYPH_BULLET} Agent ({model_name})[/bold {ACCENT}]")
     console.print(Markdown(text) if text.strip() else Text("(empty response)", style="dim"))
     console.print(f"[dim]{format_status(text, elapsed, usage)}[/dim]")
 
@@ -681,7 +681,7 @@ def chat_loop(models: list[str]) -> None:
 
                         if not streaming_started:
                             live.stop()
-                            console.print(f"[bold {ACCENT}]{GLYPH_BULLET} {model_name}[/bold {ACCENT}]")
+                            console.print(f"[bold {ACCENT}]{GLYPH_BULLET} Agent ({model_name})[/bold {ACCENT}]")
                             streaming_started = True
 
                         new_text = full_reply[printed_len:]
