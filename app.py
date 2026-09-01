@@ -29,6 +29,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.rule import Rule
+from rich.segment import Segment, Segments
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
@@ -66,21 +67,27 @@ def print_err(message: str) -> None:
     console.print(f"[red]{GLYPH_ERR}[/red] {message}")
 
 SYSTEM_PROMPT = (
-    "You have four tools: search_online (quick web search, short snippets), "
-    "fetch_url (reads one full page in detail), find_file (searches a local "
-    "drive for a file or folder by name), and read_file (reads a local file's "
-    "content by exact path, paginated by line). Search first for current or "
-    "factual questions; if the snippets aren't detailed or credible enough to "
-    "answer confidently, fetch one of the returned URLs before answering. When "
+    "You have five tools: search_online (quick web search, short snippets), "
+    "fetch_url (reads one full page in detail), find_project_file (searches "
+    "only the current project directory for a file or folder by name), "
+    "find_file (searches a broader location on the user's computer for a "
+    "file or folder by name), and read_file (reads a local file's content by "
+    "path, paginated by line). Search first for current or factual "
+    "questions; if the snippets aren't detailed or credible enough to answer "
+    "confidently, fetch one of the returned URLs before answering. When "
     "calling fetch_url, copy the exact 'https://...' URL string from a "
     "search_online result verbatim — never a placeholder or description. Say "
-    "which source you used. Before calling find_file, you must ask the user "
-    "which drive to search (e.g. 'C' or 'D') unless they already said — never "
-    "guess or default to a drive, especially not C: since it's mostly "
-    "irrelevant OS files. When asked about a local file's content, use "
-    "find_file first if you don't have its exact path, then read_file — if "
-    "read_file's result says there's more to read, keep calling it with the "
-    "next offset until you've seen the whole file before answering, so your "
+    "which source you used. For a file described as part of 'this project', "
+    "'this repo', or 'the current folder', call find_project_file directly — "
+    "it never needs confirmation. For anything else, before calling find_file "
+    "you must ask the user which location to search (e.g. their home "
+    "directory, or a specific folder) unless they already said — never guess "
+    "or default to a huge root like a whole drive or filesystem. When asked "
+    "about a local file's content, use find_project_file or find_file first "
+    "if you don't have its exact path, then read_file (it accepts either an "
+    "absolute path or one relative to the current project) — if read_file's "
+    "result says there's more to read, keep calling it with the next offset "
+    "until you've seen the whole file before answering, so your "
     "understanding is based on its complete content, not just the first chunk."
 )
 
@@ -441,8 +448,22 @@ def format_status(text: str, elapsed: float, usage: dict | None = None) -> str:
 
 
 def print_reply(model_name: str, text: str, elapsed: float, usage: dict | None = None) -> None:
-    console.print(f"[bold {ACCENT}]{GLYPH_BULLET} Agent ({model_name})[/bold {ACCENT}]")
-    console.print(Markdown(text) if text.strip() else Text("(empty response)", style="dim"))
+    header = Text.from_markup(f"[bold {ACCENT}]{GLYPH_BULLET} Agent ({model_name}):[/bold {ACCENT}] ")
+    if not text.strip():
+        console.print(header + Text("(empty response)", style="dim"))
+    else:
+        # Markdown always wraps at the console's full width, so printing it right after the
+        # header (no newline) would silently overflow that width by the header's length on
+        # line 1. Render it at a narrower width instead and stitch the header onto the first
+        # rendered line at the segment level, so the reply starts on the header's own line.
+        body_width = max(20, console.width - header.cell_len)
+        lines = console.render_lines(Markdown(text), console.options.update(width=body_width), pad=False)
+        if lines:
+            console.print(Segments(list(header.render(console)) + lines[0] + [Segment.line()]), end="")
+            for line in lines[1:]:
+                console.print(Segments(line + [Segment.line()]), end="")
+        else:
+            console.print(header)
     console.print(f"[dim]{format_status(text, elapsed, usage)}[/dim]")
 
 
@@ -743,9 +764,18 @@ def chat_loop(models: list[str]) -> None:
                         console.print()
                     console.print("[dim]⎋ cancelled[/dim]")
                 elif streaming_started:
-                    block_lines = 1 + len(Text(full_reply).wrap(console, console.width))
-                    if console.is_terminal and block_lines <= console.size.height:
-                        console.file.write(f"\x1b[{block_lines}A\x1b[J")
+                    # The cursor is already sitting on the LAST content row (streaming used
+                    # end="", so it never advanced past it) -- moving up needs the content's
+                    # row count only, not content+header, or it overshoots by one row and
+                    # erases whatever was printed above the header too (e.g. a tool result).
+                    content_rows = len(Text(full_reply).wrap(console, console.width)) or 1
+                    total_block_rows = 1 + content_rows  # header + content, for the fits-on-screen check
+                    if console.is_terminal and total_block_rows <= console.size.height:
+                        # \x1b[{n}A moves up n rows but leaves the column wherever raw
+                        # streaming (end="") left it -- \r resets to column 0 first, or
+                        # \x1b[J clears from that leftover column and the redraw below
+                        # lands mid-line, glued onto whatever text was there before.
+                        console.file.write(f"\x1b[{content_rows}A\r\x1b[J")
                         console.file.flush()
                         print_reply(model_name, full_reply, elapsed, totals)
                     else:

@@ -6,6 +6,8 @@ import os
 
 from langchain_core.tools import tool
 
+from ._project import PROJECT_ROOT
+
 MAX_LINES_PER_CALL = 300
 MAX_CHARS_PER_CALL = 12_000
 MAX_FULL_SCAN_BYTES = 20_000_000  # above this, skip counting exact total lines
@@ -31,20 +33,29 @@ def _looks_binary(path: str) -> bool:
 def read_file(path: str, offset: int = 1, limit: int = 300) -> str:
     """Read a local text/code file so you can understand its full content.
 
-    Pass the exact file path (e.g. one returned by find_file, or one the user
-    gave you directly). Returns the file's lines, numbered, starting at
-    `offset` (1-based) for up to `limit` lines. If the file is longer than
-    what's returned, a note at the end tells you the next offset to use --
-    call this again with that offset to keep reading until you've seen the
-    whole file before answering questions about its content. Only works on
-    text/code files (source code, config, markdown, logs, csv, json, etc.);
-    binary files (images, executables, archives, PDFs) are refused.
+    Pass the exact file path -- either absolute, or relative to the current
+    project (e.g. "app.py" or one returned by find_project_file). Returns the
+    file's lines, numbered, starting at `offset` (1-based) for up to `limit`
+    lines. If the file is longer than what's returned, a note at the end
+    tells you the next offset to use -- call this again with that offset to
+    keep reading until you've seen the whole file before answering questions
+    about its content. Only works on text/code files (source code, config,
+    markdown, logs, csv, json, etc.); binary files (images, executables,
+    archives, PDFs) are refused.
     """
     path = (path or "").strip().strip('"')
     if not path:
         return "Missing a file path to read."
     if not os.path.isabs(path):
-        return f"'{path}' is not an absolute path. Ask the user for the full path, or use find_file first."
+        project_candidate = (PROJECT_ROOT / path).resolve()
+        if project_candidate.is_file():
+            path = str(project_candidate)
+        else:
+            return (
+                f"'{path}' is not an absolute path, and isn't a file in the current project "
+                f"({PROJECT_ROOT}). Ask the user for the full path, or use find_project_file / "
+                f"find_file first."
+            )
     if not os.path.exists(path):
         return f"'{path}' does not exist. Use find_file if you're not sure of the exact path."
     if os.path.isdir(path):

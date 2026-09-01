@@ -1,64 +1,73 @@
-"""A local file/folder search tool the agent can call to locate something on disk."""
+"""A local file/folder search tool for locating something outside the current project."""
 
 from __future__ import annotations
 
 import os
+import platform
 import string
-import time
-from difflib import SequenceMatcher
+from pathlib import Path
 
 from langchain_core.tools import tool
+
+from ._file_search import format_results, search_tree
+
+IS_WINDOWS = platform.system() == "Windows"
 
 # Directories that are either huge, irrelevant, or unsafe to walk into.
 EXCLUDED_DIR_NAMES = {
     ".git", ".svn", ".hg", "node_modules", "__pycache__", "venv", ".venv", "env",
     "$recycle.bin", "system volume information", "windows", "programdata",
-    "$windows.~bt", "$windows.~ws", "appdata",
+    "$windows.~bt", "$windows.~ws", "appdata", "proc", "sys", "dev",
 }
-MAX_RESULTS = 20
-MAX_SCAN_SECONDS = 60
-MAX_ENTRIES_SCANNED = 400_000
-FUZZY_THRESHOLD = 0.72
 
 
-def _available_drives() -> list[str]:
-    return [d for d in string.ascii_uppercase if os.path.exists(f"{d}:\\")]
+def _available_locations() -> dict[str, str]:
+    """Named roots the user can pick without typing a raw path: drive letters on
+    Windows, the home directory everywhere else."""
+    if IS_WINDOWS:
+        return {d: f"{d}:\\" for d in string.ascii_uppercase if os.path.exists(f"{d}:\\")}
+    return {"home": str(Path.home())}
 
 
-def _match_tier(query: str, candidate: str) -> int | None:
-    """Score how well candidate matches query. Lower tier = better match. None = no match."""
-    q = query.lower().strip()
-    c = candidate.lower()
-    stem, sep, ext = c.rpartition(".")
-    c_stem = stem if sep and ext else c
+def _resolve_location(location: str) -> tuple[str, str] | None:
+    """Resolve a user-confirmed location to (root_path, label). Accepts a named
+    location (e.g. "C" or "home") or an existing absolute folder path. None if invalid."""
+    location = (location or "").strip()
+    if not location:
+        return None
 
-    if q == c:
-        return 0
-    if q == c_stem:
-        return 1
-    if q in c:
-        return 2
-    if SequenceMatcher(None, q, c_stem or c).ratio() >= FUZZY_THRESHOLD:
-        return 3
+    named = _available_locations()
+    key = location.rstrip(":\\/ ").upper() if IS_WINDOWS else location.lower()
+    if key in named:
+        label = f"{key}:" if IS_WINDOWS else key
+        return named[key], label
+
+    candidate = os.path.expanduser(location)
+    if os.path.isabs(candidate) and os.path.isdir(candidate):
+        return candidate, candidate
+
     return None
 
 
 @tool
-def find_file(name: str, drive: str, kind: str = "any") -> str:
-    """Search an entire drive for a file or folder by name.
+def find_file(name: str, location: str, kind: str = "any") -> str:
+    """Search a broader area of the user's computer (outside the current project) for a file or folder by name.
 
-    You MUST ask the user which drive to search (e.g. "C" or "D") before
-    calling this tool, unless they already told you in their message. Never
-    guess or default to a drive on your own -- the C: drive especially is
-    huge and mostly irrelevant OS files, so only search it if the user
-    explicitly says so. If you call this without a valid drive, it fails and
-    tells you which drives exist so you can ask the user.
+    You MUST ask the user which location to search before calling this,
+    unless they already said -- never guess or default to a huge root like a
+    whole drive or filesystem. Good choices to offer: "home" (their home
+    directory), a drive letter like "C" or "D" if they're on Windows, or a
+    specific folder path they name. For files that are part of the current
+    project, use find_project_file instead -- it needs no confirmation. If
+    you call this with an invalid or missing location, it fails and tells you
+    the valid named locations so you can ask the user.
 
     Args:
         name: the file or folder name to look for. Matching is fuzzy and
               case-insensitive, so a partial name or a close guess is fine.
               Include the extension if the user gave one (e.g. "report.pdf").
-        drive: a single drive letter the user confirmed, e.g. "C" or "D".
+        location: a location the user confirmed: "home", a drive letter such
+              as "C" (Windows only), or an absolute folder path.
         kind: "file" to only match files, "folder" to only match folders, or
               "any" (default) to match either.
     """
@@ -66,56 +75,18 @@ def find_file(name: str, drive: str, kind: str = "any") -> str:
     if not name:
         return "Missing a file/folder name to search for."
 
-    drives = _available_drives()
-    drive = (drive or "").strip().rstrip(":\\/").upper()
-    if len(drive) != 1 or drive not in drives:
+    resolved = _resolve_location(location)
+    if resolved is None:
+        options = ", ".join(_available_locations().keys())
         return (
-            f"Invalid or missing drive '{drive}'. Ask the user which drive to search. "
-            f"Available drives: {', '.join(d + ':' for d in drives)}."
+            f"Invalid or missing location '{location}'. Ask the user which location to "
+            f"search. Available named locations: {options} (or give a specific folder path)."
         )
+    root, label = resolved
 
     kind = (kind or "any").strip().lower()
     if kind not in ("file", "folder", "any"):
         kind = "any"
 
-    root = f"{drive}:\\"
-    matches: list[tuple[int, str, str]] = []
-    scanned = 0
-    start = time.monotonic()
-    truncated = False
-
-    for dirpath, dirnames, filenames in os.walk(root, topdown=True, onerror=lambda e: None):
-        dirnames[:] = [d for d in dirnames if d.lower() not in EXCLUDED_DIR_NAMES]
-
-        if time.monotonic() - start > MAX_SCAN_SECONDS or scanned > MAX_ENTRIES_SCANNED:
-            truncated = True
-            break
-
-        if kind in ("folder", "any"):
-            for d in dirnames:
-                scanned += 1
-                tier = _match_tier(name, d)
-                if tier is not None:
-                    matches.append((tier, os.path.join(dirpath, d), "folder"))
-
-        if kind in ("file", "any"):
-            for f in filenames:
-                scanned += 1
-                tier = _match_tier(name, f)
-                if tier is not None:
-                    matches.append((tier, os.path.join(dirpath, f), "file"))
-
-    if not matches:
-        note = " (search was stopped early due to size/time limits)" if truncated else ""
-        target = kind if kind != "any" else "file or folder"
-        return f"No {target} matching '{name}' found on {drive}:{note}."
-
-    matches.sort(key=lambda m: (m[0], len(m[1]), m[1].lower()))
-    top = matches[:MAX_RESULTS]
-
-    lines = [f"Found {len(matches)} match(es) for '{name}' on {drive}: (showing top {len(top)}):"]
-    for _, path, kind_label in top:
-        lines.append(f"- [{kind_label}] {path}")
-    if truncated:
-        lines.append("Note: the search was stopped early (time/size limit) -- results may be incomplete.")
-    return "\n".join(lines)
+    matches, truncated = search_tree(root, name, kind, EXCLUDED_DIR_NAMES)
+    return format_results(matches, name, kind, label, truncated)
