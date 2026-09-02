@@ -23,9 +23,10 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from rich import box
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.padding import Padding
 from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.rule import Rule
@@ -53,6 +54,12 @@ GLYPH_RESULT = "⎿"   # a tool call's result, indented under its bullet
 GLYPH_OK = "✓"
 GLYPH_WARN = "⚠"
 GLYPH_ERR = "✗"
+GLYPH_THINK = "✻"   # live reasoning trace, and its collapsed "Thought for Xs" summary
+
+# How many of the most recent wrapped reasoning lines stay on screen while a
+# thinking-capable model streams its chain of thought -- older lines scroll off
+# the top instead of flooding the terminal with the full trace.
+THINKING_VISIBLE_LINES = 4
 
 
 def print_ok(message: str) -> None:
@@ -257,9 +264,40 @@ def get_installed_models() -> list[str]:
     return names
 
 
+def model_supports_thinking(model_name: str) -> bool:
+    """Whether Ollama reports a 'thinking' capability for this model (via /api/show).
+
+    Passing reasoning=True to ChatOllama for a model that lacks this capability makes
+    Ollama respond with an HTTP 400, so this must be checked before opting in.
+    """
+    try:
+        info = ollama_client.show(model_name)
+    except Exception:
+        return False
+    caps = info.get("capabilities") if isinstance(info, dict) else getattr(info, "capabilities", None)
+    return bool(caps) and "thinking" in caps
+
+
+def unload_model(model_name: str) -> None:
+    """Ask Ollama to free this model's memory immediately instead of waiting out its
+    keep-alive window.
+
+    Without this, switching models (or exiting) leaves the previous model resident for
+    several more minutes. On a memory-constrained machine, two or three large models
+    staying loaded at once causes severe swap thrashing -- generation that normally
+    takes a few seconds can silently stretch to a minute or more. Best-effort: if
+    Ollama is unreachable or the model is already gone, there's nothing useful to do.
+    """
+    try:
+        ollama_client.generate(model=model_name, keep_alive=0)
+    except Exception:
+        pass
+
+
 def build_app(model_name: str, checkpointer: MemorySaver):
     """Compile a LangGraph chat graph backed by the given Ollama model, with tool-calling enabled."""
-    llm = ChatOllama(model=model_name).bind_tools(ALL_TOOLS)
+    reasoning = True if model_supports_thinking(model_name) else None
+    llm = ChatOllama(model=model_name, reasoning=reasoning).bind_tools(ALL_TOOLS)
 
     def chat_node(state: MessagesState):
         response = llm.invoke([SystemMessage(content=SYSTEM_PROMPT), *state["messages"]])
@@ -447,6 +485,51 @@ def format_status(text: str, elapsed: float, usage: dict | None = None) -> str:
     return f"{elapsed:.1f}s · {token_part}"
 
 
+def render_answer(model_name: str, text: str) -> Group:
+    """Header plus the finished reply rendered as Markdown, printed once via plain
+    console.print (not Live) -- so its height can be arbitrarily long with no cursor
+    math involved at all; the terminal just scrolls it like any other long output.
+    """
+    header = Text.from_markup(f"[bold {ACCENT}]{GLYPH_BULLET} Agent ({model_name})[/bold {ACCENT}]")
+    if not text.strip():
+        return Group(header)
+    return Group(header, Markdown(text))
+
+
+# How many of the most recent wrapped lines of the reply stay visible in the live
+# preview while it streams -- capped for the same reason as THINKING_VISIBLE_LINES: a
+# Live region whose height can grow past the space physically left below its start row
+# forces the terminal to scroll mid-redraw in a way Rich's relative cursor-up math
+# doesn't account for, corrupting unrelated content printed earlier in the turn. Once
+# the reply is done, the full thing is printed once (unbounded) via render_answer.
+ANSWER_PREVIEW_LINES = 6
+
+
+def render_answer_preview(model_name: str, text: str) -> Group:
+    """Bounded live preview of the reply while it streams: header plus only the last
+    few wrapped lines, mirroring render_thinking's scrolling-window approach.
+    """
+    header = Text.from_markup(f"[bold {ACCENT}]{GLYPH_BULLET} Agent ({model_name})[/bold {ACCENT}]")
+    width = max(20, console.width)
+    wrapped = Text(text).wrap(console, width)
+    visible = wrapped[-ANSWER_PREVIEW_LINES:]
+    return Group(header, *visible)
+
+
+def render_thinking(text: str, elapsed: float) -> Group:
+    """A live preview of streaming reasoning tokens: an animated header plus only the
+    last few wrapped lines of the chain-of-thought so far, so a long thinking trace
+    scrolls in place instead of flooding the screen -- like looking through a small
+    window onto the model's most recent thought.
+    """
+    header = Spinner("dots", text=Text(f" Thinking… {elapsed:.0f}s", style="dim italic"))
+    width = max(20, console.width - 2)
+    wrapped = Text(text, style="dim italic").wrap(console, width)
+    visible = wrapped[-THINKING_VISIBLE_LINES:]
+    body = [Padding(line, (0, 0, 0, 2)) for line in visible]
+    return Group(header, *body)
+
+
 def print_reply(model_name: str, text: str, elapsed: float, usage: dict | None = None) -> None:
     header = Text.from_markup(f"[bold {ACCENT}]{GLYPH_BULLET} Agent ({model_name}):[/bold {ACCENT}] ")
     if not text.strip():
@@ -525,6 +608,8 @@ def chat_loop(models: list[str]) -> None:
                     print_warn(f"Unknown model '{arg}'.{hint} Keeping [bold {ACCENT}]{model_name}[/bold {ACCENT}].")
                 else:
                     logger.log_event("model_switch", from_model=model_name, to_model=matched)
+                    if matched != model_name:
+                        unload_model(model_name)
                     model_name = matched
                     graph_app = build_app(model_name, checkpointer)
                     state.model_name = model_name
@@ -568,8 +653,8 @@ def chat_loop(models: list[str]) -> None:
                 print_err(f"Unknown command '{user_text}'. Type [bold]/help[/bold] for a list.")
             else:
                 full_reply = ""
-                printed_len = 0
                 streaming_started = False
+                answer_live: Live | None = None
                 final_meta: dict = {}
                 llm_calls: list[dict] = []       # one entry per LLM generation round in this turn
                 tool_events: list[dict] = []     # one entry per tool call (native or text-based) in this turn
@@ -582,8 +667,43 @@ def chat_loop(models: list[str]) -> None:
                 error: Exception | None = None
                 start_time = time.monotonic()
                 spinner = Spinner("dots", text=Text(" thinking...", style=f"italic {ACCENT}"))
-                live = Live(spinner, console=console, refresh_per_second=12, transient=True)
+
+                def new_live() -> Live:
+                    # A fresh Live object every time, never a restarted one: Live's internal
+                    # LiveRender keeps its last-rendered height (_shape) across a stop()+
+                    # start() cycle on the same instance, so restarting an already-used Live
+                    # makes its next redraw erase based on a stale height from whatever it
+                    # rendered before -- corrupting unrelated content printed in between.
+                    return Live(spinner, console=console, refresh_per_second=12, transient=True)
+
+                live = new_live()
                 live.start()
+
+                thinking_active = False   # currently streaming a live reasoning preview
+                thinking_start = 0.0
+                thinking_text = ""
+
+                def finish_thinking() -> None:
+                    """Collapse the live reasoning preview into a one-line summary, if one was showing."""
+                    nonlocal thinking_active
+                    if not thinking_active:
+                        return
+                    elapsed_think = time.monotonic() - thinking_start
+                    live.stop()
+                    console.print(f"[dim]{GLYPH_THINK} Thought for {elapsed_think:.1f}s[/dim]")
+                    thinking_active = False
+
+                def finish_answer() -> None:
+                    """Stop the bounded live preview and print the finished reply as
+                    rendered Markdown, once, if one was showing."""
+                    nonlocal streaming_started, answer_live
+                    if not streaming_started:
+                        return
+                    answer_live.stop()
+                    console.print(render_answer(model_name, full_reply))
+                    answer_live = None
+                    streaming_started = False
+
                 try:
                     for chunk in stream_reply(graph_app, user_text):
                         # response_metadata arrives on its own chunk at the end of every LLM generation
@@ -619,14 +739,32 @@ def chat_loop(models: list[str]) -> None:
                                     malformed_attempts.append(full_reply)
                             round_had_tool_calls = False
 
+                        reasoning_piece = (chunk.additional_kwargs or {}).get("reasoning_content")
+                        if reasoning_piece:
+                            if not thinking_active:
+                                thinking_active = True
+                                thinking_start = time.monotonic()
+                                thinking_text = ""
+                                if not live.is_started:
+                                    live = new_live()
+                                    live.start()
+                            thinking_text += reasoning_piece
+                            live.update(render_thinking(thinking_text, time.monotonic() - thinking_start))
+                            continue
+
                         tool_calls = getattr(chunk, "tool_calls", None) or []
                         if tool_calls:
+                            finish_thinking()
+                            finish_answer()
                             round_had_tool_calls = True
-                            if streaming_started:
-                                console.print()
-                                streaming_started = False
-                            if not live.is_started:
-                                live.start()
+                            # Stop the live spinner before printing anything with a plain
+                            # console.print(): Rich supports interleaving prints with an
+                            # active Live by choreographing around it, but that dance is
+                            # exactly the kind of cursor-position-dependent logic that's
+                            # fragile under real timing -- simpler and safer to never have
+                            # both active in the terminal at once.
+                            if live.is_started:
+                                live.stop()
                             for call in tool_calls:
                                 name = call.get("name")
                                 args = call.get("args") or {}
@@ -647,9 +785,15 @@ def chat_loop(models: list[str]) -> None:
                                 tool_call_starts[idx] = time.monotonic()
                                 console.print(f"[{ACCENT}]{GLYPH_BULLET}[/{ACCENT}] [bold]{name or 'tool'}[/bold]({_format_call_args(args)})")
                             spinner.update(text=Text(" running...", style=f"italic {ACCENT}"))
+                            live = new_live()
+                            live.start()
                             live.update(spinner)
                             continue
                         if isinstance(chunk, ToolMessage):
+                            finish_thinking()
+                            finish_answer()
+                            if live.is_started:
+                                live.stop()
                             result_name = getattr(chunk, "name", None)
                             match_idx = None
                             if result_name:
@@ -675,17 +819,14 @@ def chat_loop(models: list[str]) -> None:
                                 console.print(f"  [{result_style}]{GLYPH_RESULT}[/{result_style}]  {preview or '(no output)'}")
 
                             full_reply = ""
-                            printed_len = 0
                             fake_call_announced = False
                             round_had_tool_calls = False
-                            if streaming_started:
-                                console.print()
-                                streaming_started = False
-                            if not live.is_started:
-                                live.start()
+                            live = new_live()
+                            live.start()
                             live.update(spinner)
                             continue
                         if chunk.content:
+                            finish_thinking()
                             full_reply += chunk.content
                         if not full_reply:
                             continue
@@ -694,21 +835,24 @@ def chat_loop(models: list[str]) -> None:
                         if fake_match:
                             if not fake_call_announced:
                                 name = fake_match.group(1)
+                                if live.is_started:
+                                    live.stop()
                                 console.print(f"[{ACCENT}]{GLYPH_BULLET}[/{ACCENT}] [bold]{name}[/bold](…) [dim]as text, no native tool-calling[/dim]")
                                 spinner.update(text=Text(" running...", style=f"italic {ACCENT}"))
                                 fake_call_announced = True
+                            if not live.is_started:
+                                live = new_live()
+                                live.start()
                             live.update(spinner)
                             continue
 
                         if not streaming_started:
                             live.stop()
-                            console.print(f"[bold {ACCENT}]{GLYPH_BULLET} Agent ({model_name})[/bold {ACCENT}]")
+                            answer_live = Live(console=console, refresh_per_second=12, transient=True)
+                            answer_live.start()
                             streaming_started = True
 
-                        new_text = full_reply[printed_len:]
-                        if new_text:
-                            console.print(new_text, end="", markup=False, highlight=False, soft_wrap=True)
-                            printed_len = len(full_reply)
+                        answer_live.update(render_answer_preview(model_name, full_reply))
                 except KeyboardInterrupt:
                     cancelled = True
                 except Exception as exc:
@@ -716,6 +860,8 @@ def chat_loop(models: list[str]) -> None:
                 finally:
                     if live.is_started:
                         live.stop()
+                    if answer_live is not None and answer_live.is_started:
+                        answer_live.stop()
 
                 # Chain retries: for each tool call, point at the previous call to the same tool in this
                 # turn (if any), so a walk back through retry_of_index reconstructs the correction chain.
@@ -764,23 +910,9 @@ def chat_loop(models: list[str]) -> None:
                         console.print()
                     console.print("[dim]⎋ cancelled[/dim]")
                 elif streaming_started:
-                    # The cursor is already sitting on the LAST content row (streaming used
-                    # end="", so it never advanced past it) -- moving up needs the content's
-                    # row count only, not content+header, or it overshoots by one row and
-                    # erases whatever was printed above the header too (e.g. a tool result).
-                    content_rows = len(Text(full_reply).wrap(console, console.width)) or 1
-                    total_block_rows = 1 + content_rows  # header + content, for the fits-on-screen check
-                    if console.is_terminal and total_block_rows <= console.size.height:
-                        # \x1b[{n}A moves up n rows but leaves the column wherever raw
-                        # streaming (end="") left it -- \r resets to column 0 first, or
-                        # \x1b[J clears from that leftover column and the redraw below
-                        # lands mid-line, glued onto whatever text was there before.
-                        console.file.write(f"\x1b[{content_rows}A\r\x1b[J")
-                        console.file.flush()
-                        print_reply(model_name, full_reply, elapsed, totals)
-                    else:
-                        console.print()
-                        console.print(f"[dim]{format_status(full_reply, elapsed, totals)}[/dim]")
+                    reply_text = full_reply
+                    finish_answer()
+                    console.print(f"[dim]{format_status(reply_text, elapsed, totals)}[/dim]")
                     state.turn_count += 1
                 else:
                     print_reply(model_name, full_reply, elapsed, totals)
@@ -808,6 +940,7 @@ def chat_loop(models: list[str]) -> None:
 
             console.print()
     finally:
+        unload_model(model_name)
         logger.close()
 
 
