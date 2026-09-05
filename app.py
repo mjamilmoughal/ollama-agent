@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Iterator
 
 import ollama as ollama_client
-from langchain_core.messages import AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
 from langchain_ollama import ChatOllama
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import START, MessagesState, StateGraph
@@ -35,10 +35,11 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
-from tools import ALL_TOOLS
+from tools import ALL_TOOLS, VISION_TOOLS
 
 console = Console()
 THREAD_ID = "session"
+OLLAMA_NUM_CTX = 16_384
 HISTORY_FILE = Path.home() / ".ollama_chat_history"
 SESSIONS_DIR = Path(__file__).resolve().parent / "sessions"
 
@@ -74,28 +75,72 @@ def print_err(message: str) -> None:
     console.print(f"[red]{GLYPH_ERR}[/red] {message}")
 
 SYSTEM_PROMPT = (
-    "You have five tools: search_online (quick web search, short snippets), "
+    "You have fifteen tools: search_online (quick web search, short snippets), "
     "fetch_url (reads one full page in detail), find_project_file (searches "
     "only the current project directory for a file or folder by name), "
     "find_file (searches a broader location on the user's computer for a "
-    "file or folder by name), and read_file (reads a local file's content by "
-    "path, paginated by line). Search first for current or factual "
+    "file or folder by name), list_directory (shows a folder's structure as a "
+    "tree, for getting oriented before searching by name), read_file (reads a "
+    "local file's content by path, paginated by line), search_in_file (finds "
+    "text or keys inside one large file), discover_site_pages (inventories "
+    "pages across a public site), fetch_urls (reads a bounded batch of exact "
+    "page URLs), plus inspect_json, get_json_value, rank_json_records, and "
+    "highest_nested_json_count for deterministic JSON analysis, and git_log, "
+    "git_diff, and git_blame for read-only questions about the project's git "
+    "history (recent commits, uncommitted changes, or who last touched a "
+    "line) -- these only work if the project is a git repository, never "
+    "modify anything, and cannot commit, stage, or revert changes. Search first for current or factual "
     "questions; if the snippets aren't detailed or credible enough to answer "
     "confidently, fetch one of the returned URLs before answering. When "
+    "the user asks who a real person is, or explicitly asks you to search, you "
+    "must call search_online before answering. Never say you searched, fetched, "
+    "read, or analyzed a source unless a corresponding tool result is present "
+    "in the conversation. If a required tool call fails, report that failure "
+    "instead of answering from memory. If a tool result reports missing or "
+    "invalid arguments and the correction is clear from the user's request, "
+    "immediately call the tool again with corrected arguments; never stop after "
+    "only saying that you will retry. When "
     "calling fetch_url, copy the exact 'https://...' URL string from a "
     "search_online result verbatim — never a placeholder or description. Say "
-    "which source you used. For a file described as part of 'this project', "
+    "which source you used. For requests about all pages, an entire website, "
+    "or finding pages within one site, call discover_site_pages, applying the "
+    "user's include/exclude requirements. Then call fetch_urls in batches on "
+    "the discovered URLs; use its query argument to target desired information. "
+    "Never claim a complete crawl if discovery reached a limit or reported failures. "
+    "When you don't know a project's layout, or a search for a filename "
+    "comes back empty, call list_directory to see the actual folder "
+    "structure before guessing further names. For a file described as part "
+    "of 'this project', "
     "'this repo', or 'the current folder', call find_project_file directly — "
     "it never needs confirmation. For anything else, before calling find_file "
     "you must ask the user which location to search (e.g. their home "
     "directory, or a specific folder) unless they already said — never guess "
     "or default to a huge root like a whole drive or filesystem. When asked "
     "about a local file's content, use find_project_file or find_file first "
-    "if you don't have its exact path, then read_file (it accepts either an "
-    "absolute path or one relative to the current project) — if read_file's "
-    "result says there's more to read, keep calling it with the next offset "
-    "until you've seen the whole file before answering, so your "
-    "understanding is based on its complete content, not just the first chunk."
+    "if you don't have its exact path. For small text files, use read_file. "
+    "For large files, use search_in_file to locate relevant sections instead "
+    "of reading every page. For an unfamiliar JSON file, call inspect_json on "
+    "the file first and use its exact discovered paths and fields. Then use "
+    "get_json_value for direct values, rank_json_records when records contain "
+    "a scalar numeric field, or highest_nested_json_count when repeated values "
+    "must be counted separately inside each parent record. These tools are "
+    "schema-driven; never assume field names from the user's wording. Do not "
+    "calculate JSON aggregates from read_file snippets. Report every record tied "
+    "for a maximum. Never "
+    "claim you searched, read, or analyzed a file unless you actually called "
+    "the appropriate tool in the current turn. If read_file is appropriate and "
+    "its result says there is more to read, continue at the next offset until "
+    "you have enough evidence to answer; do not guess from an incomplete chunk."
+)
+
+# Appended to SYSTEM_PROMPT only for models with a bound view_image tool (see
+# model_supports_vision) -- describing a tool the model doesn't actually have
+# would just invite a call that can never succeed.
+VISION_SYSTEM_ADDENDUM = (
+    " You also have view_image, which lets you actually see a local image "
+    "file (path absolute or relative to the project). Use it whenever the "
+    "user asks about an image, screenshot, photo, or diagram file. If you "
+    "don't know its exact path, call find_project_file or find_file first."
 )
 
 COMMANDS = {
@@ -150,6 +195,31 @@ _TOOL_ERROR_MARKERS = (
 def _looks_like_tool_error(text: str | None) -> bool:
     lowered = (text or "").strip().lower()[:200]
     return any(marker in lowered for marker in _TOOL_ERROR_MARKERS)
+
+
+def _tool_result_text(content) -> str:
+    """Flatten a tool result into plain text for previews, error-sniffing, and logging.
+
+    Most tools return a plain string, but a multimodal tool like view_image returns
+    a list of content blocks (text + a base64 image_url) -- that image data doesn't
+    belong in a console preview or the session log, so only the text portions are
+    kept, with a note for anything non-text that was dropped.
+    """
+    if not isinstance(content, list):
+        return content or ""
+    parts = []
+    skipped = 0
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and block.get("type") == "text":
+            parts.append(block.get("text", ""))
+        else:
+            skipped += 1
+    text = "\n".join(part for part in parts if part)
+    if skipped:
+        text += f" [+{skipped} non-text attachment(s)]"
+    return text.strip()
 
 
 class SessionState:
@@ -278,6 +348,72 @@ def model_supports_thinking(model_name: str) -> bool:
     return bool(caps) and "thinking" in caps
 
 
+def model_supports_vision(model_name: str) -> bool:
+    """Whether Ollama reports a 'vision' capability for this model (via /api/show).
+
+    Binding view_image to a model that can't process images risks Ollama
+    rejecting or mishandling image data it has no way to use, so this is
+    checked before offering the tool at all.
+    """
+    try:
+        info = ollama_client.show(model_name)
+    except Exception:
+        return False
+    caps = info.get("capabilities") if isinstance(info, dict) else getattr(info, "capabilities", None)
+    return bool(caps) and "vision" in caps
+
+
+def _text_tool_instructions(tools: list) -> str:
+    specifications = []
+    for available_tool in tools:
+        schema = available_tool.args_schema.model_json_schema() if available_tool.args_schema else {}
+        specifications.append({
+            "name": available_tool.name,
+            "description": available_tool.description,
+            "parameters": schema,
+        })
+    return (
+        "Native tool-call formatting is unavailable for this generation. "
+        "If a tool is needed, output exactly one JSON object and no other text: "
+        '{"tool":"tool_name","args":{"argument":"value"}}. '
+        "Use only one of these registered tool specifications:\n"
+        + json.dumps(specifications, ensure_ascii=False)
+        + "\nIf a tool result is already present and sufficient, answer the user normally instead of emitting JSON."
+    )
+
+
+def _is_native_tool_format_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "does not match the expected" in message and "format" in message
+
+
+def _should_retry_with_text_tools(response, messages: list) -> bool:
+    if response.tool_calls:
+        return False
+    if not str(response.content or "").strip():
+        return True
+    if not messages or not isinstance(messages[-1], ToolMessage):
+        return False
+    return _looks_like_tool_error(_tool_result_text(messages[-1].content))
+
+
+def _required_search_query(messages: list) -> str | None:
+    """Return a mandatory initial web query for requests that require grounding."""
+    if not messages or not isinstance(messages[-1], HumanMessage):
+        return None
+    text = str(messages[-1].content or "").strip()
+    if re.search(r"\b(search (?:online|the web)|look (?:it |this )?up online)\b", text, re.IGNORECASE):
+        return text
+    person_match = re.fullmatch(r"Who is ([^?]+)\??", text, re.IGNORECASE)
+    if not person_match:
+        return None
+    name = person_match.group(1).strip()
+    words = name.split()
+    if 2 <= len(words) <= 5 and all(word[:1].isupper() for word in words):
+        return name
+    return None
+
+
 def unload_model(model_name: str) -> None:
     """Ask Ollama to free this model's memory immediately instead of waiting out its
     keep-alive window.
@@ -297,10 +433,47 @@ def unload_model(model_name: str) -> None:
 def build_app(model_name: str, checkpointer: MemorySaver):
     """Compile a LangGraph chat graph backed by the given Ollama model, with tool-calling enabled."""
     reasoning = True if model_supports_thinking(model_name) else None
-    llm = ChatOllama(model=model_name, reasoning=reasoning).bind_tools(ALL_TOOLS)
+    vision = model_supports_vision(model_name)
+    tools = ALL_TOOLS + VISION_TOOLS if vision else ALL_TOOLS
+    system_prompt = SYSTEM_PROMPT + VISION_SYSTEM_ADDENDUM if vision else SYSTEM_PROMPT
+    base_llm = ChatOllama(
+        model=model_name,
+        reasoning=reasoning,
+        num_ctx=OLLAMA_NUM_CTX,
+    )
+    llm = base_llm.bind_tools(tools)
+    text_tool_instructions = _text_tool_instructions(tools)
 
     def chat_node(state: MessagesState):
-        response = llm.invoke([SystemMessage(content=SYSTEM_PROMPT), *state["messages"]])
+        required_query = _required_search_query(state["messages"])
+        if required_query:
+            return {"messages": [AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "search_online",
+                    "args": {"query": required_query},
+                    "id": str(uuid.uuid4()),
+                    "type": "tool_call",
+                }],
+            )]}
+        messages = [SystemMessage(content=system_prompt), *state["messages"]]
+        try:
+            response = llm.invoke(messages)
+        except Exception as exc:
+            if not _is_native_tool_format_error(exc):
+                raise
+            response = base_llm.invoke([
+                SystemMessage(content=f"{system_prompt}\n\n{text_tool_instructions}"),
+                *state["messages"],
+            ])
+        if _should_retry_with_text_tools(response, messages):
+            response = base_llm.invoke([
+                SystemMessage(content=f"{system_prompt}\n\n{text_tool_instructions}"),
+                *state["messages"],
+            ])
+        cleaned_content = strip_leaked_reasoning(response.content)
+        if cleaned_content != response.content:
+            response = response.model_copy(update={"content": cleaned_content})
         if not response.tool_calls:
             fake_call = parse_fake_tool_call(response.content)
             if fake_call:
@@ -312,7 +485,7 @@ def build_app(model_name: str, checkpointer: MemorySaver):
 
     graph = StateGraph(MessagesState)
     graph.add_node("chat", chat_node)
-    graph.add_node("tools", ToolNode(ALL_TOOLS))
+    graph.add_node("tools", ToolNode(tools))
     graph.add_edge(START, "chat")
     graph.add_conditional_edges("chat", tools_condition)
     graph.add_edge("tools", "chat")
@@ -342,29 +515,41 @@ def print_banner(model_count: int) -> None:
     )
 
 
-TOOL_NAMES = {t.name for t in ALL_TOOLS}
-FAKE_CALL_PREFIX_RE = re.compile(r'^[\s`]*(?:json)?[\s`]*\{\s*"name"\s*:\s*"([^"]+)"', re.IGNORECASE)
+TOOL_NAMES = {t.name for t in ALL_TOOLS + VISION_TOOLS}
+FAKE_CALL_PREFIX_RE = re.compile(
+    r'(?:```(?:json)?\s*)?\{\s*"(?:name|tool)"\s*:\s*"([^"]+)"',
+    re.IGNORECASE,
+)
+FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.IGNORECASE | re.DOTALL)
+
+
+def strip_leaked_reasoning(content: str) -> str:
+    """Drop model reasoning accidentally emitted before an explicit closing think tag."""
+    if "</think>" not in (content or "").lower():
+        return content
+    return re.split(r"</think>", content, maxsplit=1, flags=re.IGNORECASE)[1].lstrip()
 
 
 def parse_fake_tool_call(content: str) -> dict | None:
     """Detect a tool call a model printed as plain text instead of a real tool_call, and normalize it."""
     text = (content or "").strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if text.lower().startswith("json"):
-            text = text[4:]
-        text = text.strip()
-    try:
-        data = json.loads(text)
-    except (json.JSONDecodeError, ValueError):
-        return None
-    if not isinstance(data, dict) or data.get("name") not in TOOL_NAMES:
-        return None
-    args = data.get("arguments") or data.get("args") or data.get("parameters") or {}
-    if not isinstance(args, dict):
-        return None
-    args = {k: (v["value"] if isinstance(v, dict) and "value" in v else v) for k, v in args.items()}
-    return {"name": data["name"], "args": args}
+    candidates = [text, *(match.group(1) for match in FENCED_JSON_RE.finditer(text))]
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        name = data.get("name") or data.get("tool")
+        if name not in TOOL_NAMES:
+            continue
+        args = data.get("arguments") or data.get("args") or data.get("parameters") or {}
+        if not isinstance(args, dict):
+            continue
+        args = {k: (v["value"] if isinstance(v, dict) and "value" in v else v) for k, v in args.items()}
+        return {"name": name, "args": args}
+    return None
 
 
 def match_model(query: str, models: list[str]) -> str | None:
@@ -805,14 +990,15 @@ def chat_loop(models: list[str]) -> None:
                                 match_idx = pending_tool_indices[0]
                             if match_idx is not None:
                                 pending_tool_indices.remove(match_idx)
+                                result_text = _tool_result_text(chunk.content)
                                 ev = tool_events[match_idx]
-                                ev["result"] = chunk.content
-                                ev["result_chars"] = len(chunk.content or "")
-                                ev["looks_like_error"] = _looks_like_tool_error(chunk.content)
+                                ev["result"] = result_text
+                                ev["result_chars"] = len(result_text)
+                                ev["looks_like_error"] = _looks_like_tool_error(result_text)
                                 call_start = tool_call_starts.pop(match_idx, None)
                                 ev["duration_seconds"] = round(time.monotonic() - call_start, 3) if call_start is not None else None
 
-                                preview = (chunk.content or "").strip().splitlines()[0] if chunk.content else ""
+                                preview = result_text.strip().splitlines()[0] if result_text.strip() else ""
                                 if len(preview) > 90:
                                     preview = preview[:87] + "..."
                                 result_style = "red" if ev["looks_like_error"] else "dim"
@@ -831,7 +1017,7 @@ def chat_loop(models: list[str]) -> None:
                         if not full_reply:
                             continue
 
-                        fake_match = FAKE_CALL_PREFIX_RE.match(full_reply)
+                        fake_match = FAKE_CALL_PREFIX_RE.search(full_reply)
                         if fake_match:
                             if not fake_call_announced:
                                 name = fake_match.group(1)
@@ -901,6 +1087,7 @@ def chat_loop(models: list[str]) -> None:
                 }
 
                 elapsed = time.monotonic() - start_time
+                full_reply = strip_leaked_reasoning(full_reply)
                 if error is not None:
                     if streaming_started:
                         console.print()

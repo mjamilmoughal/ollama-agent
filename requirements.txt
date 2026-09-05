@@ -6,3 +6,4 @@ ollama>=0.3.0
 prompt-toolkit>=3.0.43
 ddgs>=9.0.0
 trafilatura>=1.12.0
+Pillow>=10.0.0

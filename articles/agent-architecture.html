@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>How This Agent Is Built</title>
+<style>
+  :root {
+    --ink: #1c1c1c;
+    --sub: #55554f;
+    --line: #e2e0d8;
+    --bg: #fdfcf9;
+    --card: #f6f4ee;
+    --accent: #8a5a3b;
+    --mono-bg: #2b2a27;
+    --mono-ink: #eae6da;
+    --good: #3f6b4a;
+    --bad: #a33f2e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif;
+    line-height: 1.65;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 56px 24px 120px; }
+  .kicker {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: 700;
+    margin-bottom: 14px;
+  }
+  h1.title {
+    font-size: 2.3rem;
+    line-height: 1.15;
+    margin: 0 0 14px;
+    font-weight: 700;
+  }
+  .dek {
+    font-size: 1.15rem;
+    color: var(--sub);
+    font-style: italic;
+    margin: 0 0 40px;
+    line-height: 1.5;
+  }
+  h2 {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 1.5rem;
+    margin: 52px 0 18px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--line);
+  }
+  h3 {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 1.15rem;
+    margin: 30px 0 12px;
+    color: var(--accent);
+  }
+  p { margin: 0 0 18px; font-size: 1.08rem; }
+  ul, ol { margin: 0 0 18px; padding-left: 26px; }
+  li { margin-bottom: 8px; font-size: 1.08rem; }
+  li > ul, li > ol { margin-top: 8px; }
+  a { color: var(--accent); }
+  strong { font-weight: 700; }
+  code {
+    font-family: 'SF Mono', Consolas, Menlo, monospace;
+    background: var(--card);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.88em;
+  }
+  pre.trace {
+    background: var(--mono-bg);
+    color: var(--mono-ink);
+    padding: 14px 16px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-family: 'SF Mono', Consolas, Menlo, monospace;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    margin: 0 0 20px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .diagram {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 20px 22px;
+    margin: 24px 0;
+    font-family: 'SF Mono', Consolas, Menlo, monospace;
+    font-size: 0.86rem;
+    line-height: 1.7;
+    overflow-x: auto;
+    color: var(--ink);
+  }
+  .diagram .arrow { color: var(--accent); }
+  .callout {
+    background: #fff9ec;
+    border: 1px solid #ecdcb0;
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin: 24px 0;
+    font-size: 1rem;
+  }
+  .callout .label {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-weight: 700;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #8a6416;
+    margin-bottom: 8px;
+  }
+  .callout.postmortem {
+    background: #fbeeea;
+    border-color: #e6c3b5;
+  }
+  .callout.postmortem .label { color: var(--bad); }
+  hr.sep {
+    border: none;
+    border-top: 1px solid var(--line);
+    margin: 48px 0;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0 28px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 0.92rem;
+  }
+  th, td {
+    text-align: left;
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--sub);
+    border-bottom: 2px solid var(--ink);
+  }
+  .tag {
+    display: inline-block;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 20px;
+    letter-spacing: 0.02em;
+    background: var(--card);
+    color: var(--sub);
+  }
+  .meta-byline {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 0.85rem;
+    color: var(--sub);
+    margin-bottom: 40px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--line);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="kicker">Notes from building this project — architecture, not a tutorial</div>
+  <h1 class="title">How This Agent Is Built</h1>
+  <p class="dek">A terminal chat agent that runs entirely against local Ollama models: a LangGraph loop underneath, twelve tools it can reach for, and a rendering layer that had to be rebuilt more than once before it stopped lying about what was on screen.</p>
+
+  <div class="meta-byline">DRAFT — internal architecture notes for this repository (<code>ollama-agent</code>).</div>
+
+  <p>This is the same codebase used in the "six local models, one agent" experiments — but this piece isn't about what the models did. It's about how the thing they're running inside actually works: the graph that drives tool calls, the tools themselves, and the terminal UI that has to render a live-streaming, occasionally tool-calling, occasionally reasoning conversation without corrupting its own scrollback.</p>
+
+  <h2>The core loop</h2>
+
+  <p>The whole agent is one small <code>langgraph</code> <code>StateGraph</code> with two nodes:</p>
+
+  <div class="diagram">START <span class="arrow">──▶</span> chat <span class="arrow">──▶</span> tools_condition
+  <span class="arrow">│</span>              <span class="arrow">│</span>
+  <span class="arrow">│</span>     no tool calls <span class="arrow">──▶</span> END
+  <span class="arrow">│</span>              <span class="arrow">│</span>
+  <span class="arrow">│</span>     tool calls <span class="arrow">──▶</span> tools <span class="arrow">──▶</span> chat  (loop)</div>
+
+  <p><code>chat</code> invokes whichever Ollama model is currently selected via <code>ChatOllama(model=model_name, reasoning=...).bind_tools(ALL_TOOLS)</code>, prefixed with a single long system prompt describing all twelve tools and the rules for using them. <code>tools</code> is a stock LangGraph <code>ToolNode</code> built from the same tool list. <code>tools_condition</code> is the routing function: if the model's response carries tool calls, go run them and loop back to <code>chat</code>; if not, the turn is done. A <code>MemorySaver</code> checkpointer holds the conversation, so switching models mid-session or clearing history is just swapping which checkpointer the graph is compiled against.</p>
+
+  <pre class="trace">def build_app(model_name, checkpointer):
+    reasoning = True if model_supports_thinking(model_name) else None
+    llm = ChatOllama(model=model_name, reasoning=reasoning).bind_tools(ALL_TOOLS)
+
+    def chat_node(state):
+        response = llm.invoke([SystemMessage(content=SYSTEM_PROMPT), *state["messages"]])
+        if not response.tool_calls:
+            fake_call = parse_fake_tool_call(response.content)
+            if fake_call:
+                response = response.model_copy(update={"content": "", "tool_calls": [...]})
+        return {"messages": [response]}
+
+    graph = StateGraph(MessagesState)
+    graph.add_node("chat", chat_node)
+    graph.add_node("tools", ToolNode(ALL_TOOLS))
+    graph.add_edge(START, "chat")
+    graph.add_conditional_edges("chat", tools_condition)
+    graph.add_edge("tools", "chat")
+    return graph.compile(checkpointer=checkpointer)</pre>
+
+  <p>That <code>parse_fake_tool_call</code> line matters more than it looks. Not every local model emits LangChain's native <code>tool_calls</code> structure reliably — some print a JSON object that <em>looks</em> like a tool call as plain text instead. Rather than silently treating that as a wrong answer, the chat node checks whether the model's own text parses as <code>{"name": "...", "arguments": {...}}</code> against a known tool name, and if so, promotes it into a real tool call before the graph routes on it. It's the difference between an agent that only works with models that support function-calling cleanly, and one that degrades gracefully on the ones that don't.</p>
+
+  <h2>The tool belt</h2>
+
+  <p>Twelve tools, grouped by what they're actually for:</p>
+
+  <table>
+    <tr><th>Group</th><th>Tools</th><th>What they do</th></tr>
+    <tr><td>Web</td><td><code>search_online</code>, <code>fetch_url</code></td><td>DuckDuckGo snippet search, then a full single-page read via <code>trafilatura</code> when the snippet isn't enough.</td></tr>
+    <tr><td>Site crawling</td><td><code>discover_site_pages</code>, <code>fetch_urls</code></td><td>robots.txt + sitemap + same-site link discovery, bounded by depth/page/time limits; then a batched, query-focused multi-page read.</td></tr>
+    <tr><td>Filesystem</td><td><code>find_project_file</code>, <code>find_file</code>, <code>read_file</code>, <code>search_in_file</code></td><td>Fuzzy name search (project-scoped vs. anywhere-on-disk with explicit user consent), paginated reading, and bounded in-file grep.</td></tr>
+    <tr><td>JSON analysis</td><td><code>inspect_json</code>, <code>get_json_value</code>, <code>rank_json_records</code>, <code>highest_nested_json_count</code></td><td>Schema-first, deterministic queries over a JSON file so the model never has to eyeball a large dataset or compute an aggregate from a snippet.</td></tr>
+  </table>
+
+  <p>A few design choices repeat across all of them:</p>
+
+  <ul>
+    <li><strong>Shared engines, not copy-pasted logic.</strong> <code>find_file</code> and <code>find_project_file</code> both call into <code>_file_search.py</code>'s <code>search_tree</code>/<code>match_tier</code>; every filesystem tool resolves relative paths against the same <code>_project.py::PROJECT_ROOT</code>. <code>site_tools.py</code> imports its rejection check directly from <code>fetch_url.py</code> instead of re-implementing it.</li>
+    <li><strong>Everything is bounded.</strong> Max file size, max scan time, max entries walked, max crawl depth, max output characters — every tool caps its own blast radius and says so in its result (<code>"...may be incomplete"</code>) rather than silently truncating and letting the model assume completeness.</li>
+    <li><strong>SSRF-aware fetching.</strong> <code>fetch_url</code>'s <code>_rejection_reason()</code> resolves the hostname and rejects private, loopback, link-local, and reserved IP ranges before ever opening a connection — so a model can't be tricked (by a redirect, or a page it read) into reaching internal network services. <code>site_tools.py</code> reuses the exact same check for crawling and batch fetching, so there's one place that decides what's fetchable, not three slightly different ones.</li>
+    <li><strong>find_file needs a human in the loop; find_project_file doesn't.</strong> The system prompt is explicit: searching the whole filesystem requires the user to name a location first (home directory, a drive letter, a specific folder) — never a default to "everything." Searching inside the current project needs no such confirmation, since that's already the working set.</li>
+  </ul>
+
+  <h3>Why JSON gets its own tool family</h3>
+
+  <p>The four JSON tools exist because "read the file and compute the answer" doesn't scale — a model asked "who scored the most goals" over a 9,000-line tournament dataset either burns most of its context window on raw JSON or just guesses. <code>inspect_json</code> walks the structure breadth-first and reports paths, types, and array shapes without ever returning the data itself; the model is expected to call it first on anything unfamiliar, then use the <em>exact</em> field names it discovers in the follow-up calls. <code>rank_json_records</code> and <code>highest_nested_json_count</code> both return every tied record at the maximum, not just one — ties are a real failure mode for models that pick an arbitrary "first" result and report it as the answer.</p>
+
+  <h2>Designing the terminal UI</h2>
+
+  <p>The chat loop uses <a href="https://github.com/Textualize/rich"><code>rich</code></a>'s <code>Live</code> displays for anything that updates in place: a spinner while waiting on the model, a bounded scrolling preview of the model's live reasoning trace once a thinking-capable model starts emitting one, and a bounded preview of the reply itself while it streams. "Bounded" is the operative word, and it's bounded on purpose, not by accident — the first version wasn't, and that turned into the most instructive bug in this codebase.</p>
+
+  <div class="callout">
+    <div class="label">Reasoning display</div>
+    Ollama streams `thinking` tokens separately from `content` for models that support it (checked once per model via `/api/show`'s `capabilities` list, since asking a non-thinking model for reasoning is a hard 400). While those tokens arrive, the terminal shows a small animated block — a spinner header plus only the <em>last four</em> wrapped lines of the trace so far — that collapses into a single <code>✻ Thought for 12.3s</code> line the moment real content starts. The full trace is never dumped to the screen; only a rolling window of it.
+  </div>
+
+  <div class="callout postmortem">
+    <div class="label">Post-mortem: the unbounded Live region</div>
+    <p>The reply itself was originally streamed the same way <code>ollama run</code> shows it — printed raw as tokens arrived, then, once the model finished, the raw text was erased with a hand-rolled <code>cursor-up N rows, clear-to-end-of-screen</code> sequence and replaced with a properly rendered Markdown version. Two things went wrong with that, both traced by replaying real sessions through a headless terminal (<code>pyte</code>) with scrollback recording enabled, byte for byte:</p>
+    <ul>
+      <li>The row count used to move the cursor was computed with Rich's own line-wrapping math, which doesn't always agree with how the real terminal wraps the same raw text — so a long reply could erase more (or less) than intended, corrupting whatever was printed above it. Long replies routinely exceeded the terminal's visible height entirely, which skipped the "clean" redraw path altogether and left the literal <code>**bold**</code> markdown syntax on screen, unrendered.</li>
+      <li>Deeper down: a single shared <code>Live</code> object was being stopped and restarted repeatedly across a turn — once after a thinking phase, again around every tool call. Rich's <code>Live</code> doesn't reset its internal "how tall was my last render" state across a stop-then-start on the same instance, so the very next redraw after a restart erased based on a stale height left over from whatever it had rendered <em>before</em> — a five-line thinking box, say — even though nothing five lines tall belonged there anymore. That erased real content: tool-call bullets, the "Thought for Xs" line, sometimes the user's own typed question, however far back the stale height reached.</li>
+    </ul>
+    <p>The fix removed the hand-rolled cursor math entirely. Both the thinking trace and the streaming reply now render through <em>bounded</em> Live regions — a fixed handful of lines, always — while they're in motion, and the final, fully-rendered form is printed exactly once via a plain <code>console.print()</code> when they're done, with no cursor repositioning involved at all. And every restart of the shared spinner now constructs a brand-new <code>Live</code> instance instead of reusing a stopped one, so there's no stale render state left to go stale in the first place.</p>
+  </div>
+
+  <p>The practical rule that fell out of this: a live-updating terminal region is safe exactly as long as its maximum height is known in advance and small. The moment its height depends on how much content has streamed so far, it's one long reply away from needing more room than is physically left on screen — and no amount of careful cursor math survives a real terminal being forced to scroll mid-redraw.</p>
+
+  <h2>Keeping the model honest</h2>
+
+  <p>Local models — especially small ones — will confidently narrate having done things they didn't do. The system prompt pushes back on this directly: <em>"Never say you searched, fetched, read, or analyzed a source unless a corresponding tool result is present in the conversation."</em> Combined with the fake-tool-call promotion in <code>chat_node</code>, the aim is that a claim of tool use in the final answer should always correspond to a real entry in that turn's tool-call log — which matters, because that log is exactly what gets written out afterward for analysis.</p>
+
+  <h2>Every turn is a data point</h2>
+
+  <p><code>SessionLogger</code> writes each turn to <code>sessions/&lt;timestamp&gt;_&lt;model&gt;.json</code> as it happens: the user message, the full reply, every LLM call's token counts and timing, every tool call's arguments/result/duration, and a chain of which calls were retries of earlier ones on the same tool. A few heuristics run automatically over that data — a turn with eight or more tool calls, or three identical calls in a row, gets auto-flagged as a possible infinite loop; text that looks like a failed tool call but never parsed gets flagged as malformed. None of that is treated as ground truth, though: <code>/rate</code>, <code>/failure</code>, <code>/necessary</code>/<code>/unnecessary</code>, and <code>/note</code> let a human annotate the last turn directly from the terminal, and <code>/task</code> marks a boundary so turns can be grouped by what was actually being tested. That's the same log format the "six models" experiments were built on — this agent was designed to be measured, not just used.</p>
+
+  <hr class="sep">
+
+  <p>None of this is exotic. It's a two-node graph, a bounded tool belt, and a rendering layer that took a real bug to get right. But that's roughly the point: the interesting failure modes in a local, tool-calling agent aren't in the model weights — they're in the seams between the model, the tools, and the terminal it's talking through.</p>
+
+</div>
+</body>
+</html>

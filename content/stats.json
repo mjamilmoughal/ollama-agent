@@ -1,0 +1,684 @@
+{
+  "dataset": {
+    "name": "smart_building_iot_demo",
+    "version": "1.4.0",
+    "generated_at": "2026-09-02T10:30:00Z",
+    "description": "Synthetic IoT telemetry and operational data for a multi-building smart campus.",
+    "organization": {
+      "id": "org_001",
+      "name": "Northstar Research Campus",
+      "industry": "Research & Technology",
+      "timezone": "Europe/Berlin",
+      "country": "Germany"
+    }
+  },
+  "buildings": [
+    {
+      "id": "bldg_alpha",
+      "name": "Alpha Research Center",
+      "address": {
+        "street": "12 Innovation Way",
+        "city": "Munich",
+        "postal_code": "80807",
+        "country": "Germany"
+      },
+      "floors": 5,
+      "year_built": 2018,
+      "area_m2": 18400,
+      "occupancy_capacity": 620,
+      "rooms": [
+        {
+          "id": "alpha_101",
+          "name": "Control Room",
+          "floor": 1,
+          "type": "operations",
+          "capacity": 12,
+          "devices": [
+            {
+              "id": "dev_alpha_101_temp",
+              "type": "temperature_sensor",
+              "manufacturer": "Sensirion",
+              "model": "SHT45",
+              "firmware": "3.2.1",
+              "status": "online",
+              "installed_at": "2024-03-12",
+              "battery_percent": 87,
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:24:11Z",
+                "value": 22.4,
+                "unit": "celsius"
+              }
+            },
+            {
+              "id": "dev_alpha_101_humidity",
+              "type": "humidity_sensor",
+              "manufacturer": "Sensirion",
+              "model": "SHT45",
+              "firmware": "3.2.1",
+              "status": "online",
+              "battery_percent": 91,
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:24:12Z",
+                "value": 44.8,
+                "unit": "percent"
+              }
+            },
+            {
+              "id": "dev_alpha_101_co2",
+              "type": "co2_sensor",
+              "manufacturer": "Senseair",
+              "model": "S8",
+              "firmware": "2.8.0",
+              "status": "online",
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:24:13Z",
+                "value": 612,
+                "unit": "ppm"
+              }
+            }
+          ]
+        },
+        {
+          "id": "alpha_102",
+          "name": "Server Operations",
+          "floor": 1,
+          "type": "server_room",
+          "capacity": 8,
+          "devices": [
+            {
+              "id": "dev_alpha_102_temp",
+              "type": "temperature_sensor",
+              "manufacturer": "Bosch",
+              "model": "BME688",
+              "firmware": "5.1.0",
+              "status": "online",
+              "battery_percent": null,
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:24:18Z",
+                "value": 27.9,
+                "unit": "celsius"
+              }
+            },
+            {
+              "id": "dev_alpha_102_humidity",
+              "type": "humidity_sensor",
+              "manufacturer": "Bosch",
+              "model": "BME688",
+              "firmware": "5.1.0",
+              "status": "online",
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:24:18Z",
+                "value": 31.2,
+                "unit": "percent"
+              }
+            },
+            {
+              "id": "dev_alpha_102_power",
+              "type": "power_meter",
+              "manufacturer": "Schneider Electric",
+              "model": "PM5560",
+              "firmware": "7.4.2",
+              "status": "online",
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:24:20Z",
+                "value": 48.7,
+                "unit": "kilowatts"
+              }
+            },
+            {
+              "id": "dev_alpha_102_cooling",
+              "type": "hvac_controller",
+              "manufacturer": "Siemens",
+              "model": "Climatix",
+              "firmware": "9.1.4",
+              "status": "online",
+              "configuration": {
+                "target_temperature": 23.0,
+                "min_temperature": 20.0,
+                "max_temperature": 25.0,
+                "mode": "automatic"
+              }
+            }
+          ]
+        },
+        {
+          "id": "alpha_201",
+          "name": "AI Laboratory",
+          "floor": 2,
+          "type": "laboratory",
+          "capacity": 32,
+          "devices": [
+            {
+              "id": "dev_alpha_201_temp",
+              "type": "temperature_sensor",
+              "manufacturer": "Sensirion",
+              "model": "SHT45",
+              "firmware": "3.2.1",
+              "status": "online",
+              "battery_percent": 72,
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:24:25Z",
+                "value": 21.7,
+                "unit": "celsius"
+              }
+            },
+            {
+              "id": "dev_alpha_201_co2",
+              "type": "co2_sensor",
+              "manufacturer": "Senseair",
+              "model": "S8",
+              "firmware": "2.8.0",
+              "status": "online",
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:24:27Z",
+                "value": 824,
+                "unit": "ppm"
+              }
+            },
+            {
+              "id": "dev_alpha_201_motion",
+              "type": "motion_sensor",
+              "manufacturer": "Philips",
+              "model": "Hue Motion",
+              "firmware": "1.9.7",
+              "status": "online",
+              "battery_percent": 63,
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:24:30Z",
+                "detected": true
+              }
+            }
+          ]
+        }
+      ],
+      "energy": {
+        "current_power_kw": 184.7,
+        "today_kwh": 2841.3,
+        "yesterday_kwh": 3017.8,
+        "monthly_kwh": 78421.9,
+        "monthly_budget_kwh": 82000,
+        "solar_generation_kw": 41.2,
+        "grid_import_kw": 143.5
+      }
+    },
+    {
+      "id": "bldg_beta",
+      "name": "Beta Engineering Hub",
+      "address": {
+        "street": "4 Robotics Avenue",
+        "city": "Munich",
+        "postal_code": "80805",
+        "country": "Germany"
+      },
+      "floors": 3,
+      "year_built": 2021,
+      "area_m2": 12300,
+      "occupancy_capacity": 410,
+      "rooms": [
+        {
+          "id": "beta_101",
+          "name": "Robotics Lab",
+          "floor": 1,
+          "type": "laboratory",
+          "capacity": 48,
+          "devices": [
+            {
+              "id": "dev_beta_101_temp",
+              "type": "temperature_sensor",
+              "manufacturer": "Sensirion",
+              "model": "SHT45",
+              "firmware": "3.2.1",
+              "status": "online",
+              "battery_percent": 94,
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:24:35Z",
+                "value": 23.1,
+                "unit": "celsius"
+              }
+            },
+            {
+              "id": "dev_beta_101_vibration",
+              "type": "vibration_sensor",
+              "manufacturer": "IFM",
+              "model": "VVB001",
+              "firmware": "4.0.3",
+              "status": "online",
+              "battery_percent": 81,
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:24:36Z",
+                "value": 2.7,
+                "unit": "mm_per_second"
+              }
+            },
+            {
+              "id": "dev_beta_101_power",
+              "type": "power_meter",
+              "manufacturer": "Siemens",
+              "model": "SENTRON",
+              "firmware": "8.3.1",
+              "status": "online",
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:24:38Z",
+                "value": 72.4,
+                "unit": "kilowatts"
+              }
+            }
+          ]
+        },
+        {
+          "id": "beta_202",
+          "name": "Prototype Workshop",
+          "floor": 2,
+          "type": "workshop",
+          "capacity": 60,
+          "devices": [
+            {
+              "id": "dev_beta_202_temp",
+              "type": "temperature_sensor",
+              "manufacturer": "Bosch",
+              "model": "BME688",
+              "firmware": "5.1.0",
+              "status": "online",
+              "battery_percent": 56,
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:24:41Z",
+                "value": 24.8,
+                "unit": "celsius"
+              }
+            },
+            {
+              "id": "dev_beta_202_air",
+              "type": "air_quality_sensor",
+              "manufacturer": "Airthings",
+              "model": "Wave Plus",
+              "firmware": "2.1.9",
+              "status": "online",
+              "battery_percent": 78,
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:24:42Z",
+                "co2_ppm": 1042,
+                "voc_index": 137,
+                "radon_bq_m3": 42
+              }
+            }
+          ]
+        }
+      ],
+      "energy": {
+        "current_power_kw": 137.2,
+        "today_kwh": 1974.5,
+        "yesterday_kwh": 2051.7,
+        "monthly_kwh": 57322.4,
+        "monthly_budget_kwh": 61000,
+        "solar_generation_kw": 18.6,
+        "grid_import_kw": 118.6
+      }
+    },
+    {
+      "id": "bldg_gamma",
+      "name": "Gamma Administration Building",
+      "address": {
+        "street": "77 Enterprise Street",
+        "city": "Munich",
+        "postal_code": "80809",
+        "country": "Germany"
+      },
+      "floors": 7,
+      "year_built": 2014,
+      "area_m2": 22600,
+      "occupancy_capacity": 890,
+      "rooms": [
+        {
+          "id": "gamma_301",
+          "name": "Executive Conference Room",
+          "floor": 3,
+          "type": "meeting_room",
+          "capacity": 24,
+          "devices": [
+            {
+              "id": "dev_gamma_301_presence",
+              "type": "presence_sensor",
+              "manufacturer": "Schneider Electric",
+              "model": "Wiser",
+              "firmware": "6.2.0",
+              "status": "online",
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:24:51Z",
+                "occupants": 17
+              }
+            },
+            {
+              "id": "dev_gamma_301_co2",
+              "type": "co2_sensor",
+              "manufacturer": "Senseair",
+              "model": "S8",
+              "firmware": "2.8.0",
+              "status": "online",
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:24:52Z",
+                "value": 1467,
+                "unit": "ppm"
+              }
+            },
+            {
+              "id": "dev_gamma_301_light",
+              "type": "light_controller",
+              "manufacturer": "Philips",
+              "model": "Dynalite",
+              "firmware": "5.8.3",
+              "status": "online",
+              "configuration": {
+                "brightness_percent": 81,
+                "color_temperature_kelvin": 4200,
+                "automatic": true
+              }
+            }
+          ]
+        },
+        {
+          "id": "gamma_405",
+          "name": "Open Office East",
+          "floor": 4,
+          "type": "office",
+          "capacity": 120,
+          "devices": [
+            {
+              "id": "dev_gamma_405_temp",
+              "type": "temperature_sensor",
+              "manufacturer": "Sensirion",
+              "model": "SHT45",
+              "firmware": "3.2.1",
+              "status": "online",
+              "battery_percent": 42,
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:25:01Z",
+                "value": 23.6,
+                "unit": "celsius"
+              }
+            },
+            {
+              "id": "dev_gamma_405_noise",
+              "type": "noise_sensor",
+              "manufacturer": "Nexelec",
+              "model": "Air",
+              "firmware": "3.7.2",
+              "status": "online",
+              "battery_percent": 67,
+              "latest_reading": {
+                "timestamp": "2026-09-02T10:25:02Z",
+                "value": 58.4,
+                "unit": "decibel"
+              }
+            }
+          ]
+        }
+      ],
+      "energy": {
+        "current_power_kw": 221.8,
+        "today_kwh": 3421.7,
+        "yesterday_kwh": 3599.1,
+        "monthly_kwh": 92144.8,
+        "monthly_budget_kwh": 95000,
+        "solar_generation_kw": 52.8,
+        "grid_import_kw": 169.0
+      }
+    }
+  ],
+  "alerts": [
+    {
+      "id": "alert_0001",
+      "severity": "critical",
+      "status": "open",
+      "created_at": "2026-09-02T09:48:12Z",
+      "building_id": "bldg_gamma",
+      "room_id": "gamma_301",
+      "device_id": "dev_gamma_301_co2",
+      "type": "air_quality",
+      "title": "High CO2 concentration",
+      "message": "CO2 concentration has exceeded 1400 ppm for more than 10 minutes.",
+      "value": 1467,
+      "threshold": 1200,
+      "unit": "ppm",
+      "recommended_action": "Increase ventilation and verify HVAC operation."
+    },
+    {
+      "id": "alert_0002",
+      "severity": "warning",
+      "status": "open",
+      "created_at": "2026-09-02T08:21:44Z",
+      "building_id": "bldg_beta",
+      "room_id": "beta_202",
+      "device_id": "dev_beta_202_air",
+      "type": "air_quality",
+      "title": "Elevated VOC index",
+      "message": "VOC index is above the recommended indoor threshold.",
+      "value": 137,
+      "threshold": 100,
+      "unit": "index",
+      "recommended_action": "Inspect ventilation and identify potential emission sources."
+    },
+    {
+      "id": "alert_0003",
+      "severity": "warning",
+      "status": "acknowledged",
+      "created_at": "2026-09-02T07:51:03Z",
+      "acknowledged_at": "2026-09-02T08:12:33Z",
+      "acknowledged_by": "user_014",
+      "building_id": "bldg_alpha",
+      "room_id": "alpha_102",
+      "device_id": "dev_alpha_102_temp",
+      "type": "temperature",
+      "title": "Server room temperature rising",
+      "message": "Temperature has exceeded 27°C.",
+      "value": 27.9,
+      "threshold": 27.0,
+      "unit": "celsius",
+      "recommended_action": "Check cooling system and server load."
+    },
+    {
+      "id": "alert_0004",
+      "severity": "info",
+      "status": "resolved",
+      "created_at": "2026-09-01T16:32:18Z",
+      "resolved_at": "2026-09-01T17:04:52Z",
+      "building_id": "bldg_beta",
+      "room_id": "beta_101",
+      "device_id": "dev_beta_101_vibration",
+      "type": "maintenance",
+      "title": "Elevated equipment vibration",
+      "message": "Vibration briefly exceeded the recommended operating range.",
+      "value": 4.2,
+      "threshold": 4.0,
+      "unit": "mm_per_second",
+      "recommended_action": "Inspect robotic arm bearings during next maintenance window."
+    }
+  ],
+  "maintenance": [
+    {
+      "id": "maint_001",
+      "building_id": "bldg_alpha",
+      "device_id": "dev_alpha_102_cooling",
+      "type": "preventive",
+      "scheduled_date": "2026-09-08",
+      "estimated_duration_minutes": 90,
+      "technician": "Martin Keller",
+      "status": "scheduled",
+      "tasks": [
+        "Inspect compressor",
+        "Clean filters",
+        "Check refrigerant pressure",
+        "Validate temperature sensors",
+        "Review cooling efficiency"
+      ]
+    },
+    {
+      "id": "maint_002",
+      "building_id": "bldg_beta",
+      "device_id": "dev_beta_101_vibration",
+      "type": "preventive",
+      "scheduled_date": "2026-09-12",
+      "estimated_duration_minutes": 120,
+      "technician": "Laura Schmidt",
+      "status": "scheduled",
+      "tasks": [
+        "Inspect robotic arm bearings",
+        "Measure motor vibration",
+        "Check gearbox lubrication",
+        "Review motor temperature",
+        "Calibrate vibration sensor"
+      ]
+    },
+    {
+      "id": "maint_003",
+      "building_id": "bldg_gamma",
+      "device_id": "dev_gamma_405_noise",
+      "type": "inspection",
+      "scheduled_date": "2026-09-05",
+      "estimated_duration_minutes": 45,
+      "technician": "Jonas Weber",
+      "status": "scheduled",
+      "tasks": [
+        "Validate noise sensor calibration",
+        "Inspect HVAC fan noise",
+        "Measure background noise"
+      ]
+    }
+  ],
+  "energy_history": [
+    {
+      "date": "2026-08-27",
+      "alpha_kwh": 2987.2,
+      "beta_kwh": 2118.5,
+      "gamma_kwh": 3677.1,
+      "total_kwh": 8782.8
+    },
+    {
+      "date": "2026-08-28",
+      "alpha_kwh": 3021.8,
+      "beta_kwh": 2187.2,
+      "gamma_kwh": 3712.8,
+      "total_kwh": 8921.8
+    },
+    {
+      "date": "2026-08-29",
+      "alpha_kwh": 2718.3,
+      "beta_kwh": 1901.4,
+      "gamma_kwh": 3122.7,
+      "total_kwh": 7742.4
+    },
+    {
+      "date": "2026-08-30",
+      "alpha_kwh": 2642.7,
+      "beta_kwh": 1824.1,
+      "gamma_kwh": 2978.4,
+      "total_kwh": 7445.2
+    },
+    {
+      "date": "2026-08-31",
+      "alpha_kwh": 2811.9,
+      "beta_kwh": 1932.7,
+      "gamma_kwh": 3241.6,
+      "total_kwh": 7986.2
+    },
+    {
+      "date": "2026-09-01",
+      "alpha_kwh": 3017.8,
+      "beta_kwh": 2051.7,
+      "gamma_kwh": 3599.1,
+      "total_kwh": 8668.6
+    },
+    {
+      "date": "2026-09-02",
+      "alpha_kwh": 2841.3,
+      "beta_kwh": 1974.5,
+      "gamma_kwh": 3421.7,
+      "total_kwh": 8237.5
+    }
+  ],
+  "occupancy": {
+    "updated_at": "2026-09-02T10:25:10Z",
+    "buildings": [
+      {
+        "building_id": "bldg_alpha",
+        "current_occupancy": 318,
+        "capacity": 620,
+        "occupancy_percent": 51.29
+      },
+      {
+        "building_id": "bldg_beta",
+        "current_occupancy": 247,
+        "capacity": 410,
+        "occupancy_percent": 60.24
+      },
+      {
+        "building_id": "bldg_gamma",
+        "current_occupancy": 684,
+        "capacity": 890,
+        "occupancy_percent": 76.85
+      }
+    ],
+    "campus_total": {
+      "current_occupancy": 1249,
+      "total_capacity": 1920,
+      "occupancy_percent": 65.05
+    }
+  },
+  "employees": [
+    {
+      "id": "user_001",
+      "name": "Anna Fischer",
+      "department": "AI Research",
+      "role": "Senior Research Scientist",
+      "building": "bldg_alpha",
+      "favorite_room": "alpha_201",
+      "active": true
+    },
+    {
+      "id": "user_002",
+      "name": "Daniel Bauer",
+      "department": "Robotics",
+      "role": "Principal Engineer",
+      "building": "bldg_beta",
+      "favorite_room": "beta_101",
+      "active": true
+    },
+    {
+      "id": "user_003",
+      "name": "Sophie Wagner",
+      "department": "Operations",
+      "role": "Facilities Manager",
+      "building": "bldg_gamma",
+      "favorite_room": "gamma_301",
+      "active": true
+    },
+    {
+      "id": "user_004",
+      "name": "Michael Hartmann",
+      "department": "Infrastructure",
+      "role": "Systems Engineer",
+      "building": "bldg_alpha",
+      "favorite_room": "alpha_102",
+      "active": true
+    }
+  ],
+  "system_statistics": {
+    "total_buildings": 3,
+    "total_rooms": 7,
+    "total_devices": 24,
+    "online_devices": 23,
+    "offline_devices": 1,
+    "open_alerts": 3,
+    "critical_alerts": 1,
+    "scheduled_maintenance": 3,
+    "total_current_power_kw": 543.7,
+    "total_solar_generation_kw": 112.6,
+    "net_grid_import_kw": 431.1,
+    "campus_occupancy_percent": 65.05,
+    "data_quality": {
+      "missing_readings_percent": 0.42,
+      "duplicate_events_percent": 0.03,
+      "late_events_percent": 0.18,
+      "last_pipeline_check": "2026-09-02T10:20:00Z"
+    }
+  }
+}
